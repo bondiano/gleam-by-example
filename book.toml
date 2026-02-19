@@ -6,3 +6,6 @@ src = "text"
 
 [build]
 build-dir = "output"
+
+[output.html]
+additional-js = ["theme/gleam-highlight.js"]

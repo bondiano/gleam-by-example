@@ -1,0 +1,20 @@
+config:
+  default: true
+  # Allow inline HTML (used in mdBook for admonitions etc.)
+  MD033: false
+  # Allow duplicate headings (different sections can share heading names)
+  MD024:
+    siblings_only: true
+  # Line length — disable for prose-heavy book chapters
+  MD013: false
+  # Allow bare URLs (sometimes useful in exercises)
+  MD034: false
+
+globs:
+  - "text/**/*.md"
+  - "*.md"
+
+ignores:
+  - "output/**"
+  - "exercises/**/build/**"
+  - "node_modules/**"

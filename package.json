@@ -1,0 +1,7 @@
+{
+  "name": "gleam-by-example",
+  "private": true,
+  "devDependencies": {
+    "markdownlint-cli2": "^0.17.0"
+  }
+}

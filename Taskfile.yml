@@ -1,0 +1,115 @@
+version: "3"
+
+vars:
+  TEXT_DIR: text
+  EXERCISES_DIR: exercises
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  # ── Tests ──────────────────────────────────────────────────────────────────
+
+  test:
+    desc: Run tests for all chapters
+    cmds:
+      - ./scripts/test-all.sh
+
+  test:chapter:
+    desc: "Run tests for a specific chapter (usage: task test:chapter -- chapter02)"
+    cmds:
+      - cd exercises/{{.CLI_ARGS}} && gleam test
+
+  test:solutions:
+    desc: Verify reference solutions for all chapters without touching student files
+    cmds:
+      - |
+        set -euo pipefail
+        for dir in exercises/chapter*/; do
+          chapter=$(basename "$dir")
+          if [ ! -f "$dir/gleam.toml" ]; then continue; fi
+          echo "==> Checking solutions for $chapter..."
+          cp "$dir/test/my_solutions.gleam" "/tmp/gleam_backup_$chapter.gleam"
+          cp "$dir/no-peeking/solutions.gleam" "$dir/test/my_solutions.gleam"
+          (cd "$dir" && gleam test) || true
+          cp "/tmp/gleam_backup_$chapter.gleam" "$dir/test/my_solutions.gleam"
+        done
+
+  test:solutions:chapter:
+    desc: "Verify reference solutions for a specific chapter (usage: task test:solutions:chapter -- chapter02)"
+    cmds:
+      - |
+        chapter="{{.CLI_ARGS}}"
+        dir="exercises/$chapter"
+        cp "$dir/test/my_solutions.gleam" /tmp/gleam_backup.gleam
+        cp "$dir/no-peeking/solutions.gleam" "$dir/test/my_solutions.gleam"
+        (cd "$dir" && gleam test); rc=$?
+        cp /tmp/gleam_backup.gleam "$dir/test/my_solutions.gleam"
+        exit $rc
+
+  # ── Lint ───────────────────────────────────────────────────────────────────
+
+  lint:
+    desc: Run all linters
+    deps: [lint:md, lint:gleam]
+
+  lint:md:
+    desc: Lint markdown files with markdownlint-cli2
+    cmds:
+      - npx markdownlint-cli2 "{{.TEXT_DIR}}/**/*.md" "*.md"
+
+  lint:gleam:
+    desc: Check Gleam code formatting in all chapters
+    cmds:
+      - |
+        set -euo pipefail
+        failed=0
+        for dir in exercises/chapter*/; do
+          if [ ! -f "$dir/gleam.toml" ]; then continue; fi
+          chapter=$(basename "$dir")
+          echo "==> Checking format for $chapter..."
+          (cd "$dir" && gleam format --check src/ test/ no-peeking/) || failed=1
+        done
+        exit $failed
+
+  fmt:
+    desc: Format Gleam code in all chapters
+    cmds:
+      - |
+        set -euo pipefail
+        for dir in exercises/chapter*/; do
+          if [ ! -f "$dir/gleam.toml" ]; then continue; fi
+          chapter=$(basename "$dir")
+          echo "==> Formatting $chapter..."
+          (cd "$dir" && gleam format src/ test/ no-peeking/)
+        done
+
+  # ── Build ──────────────────────────────────────────────────────────────────
+
+  build:
+    desc: Build all exercises and the mdBook
+    deps: [build:exercises, build:book]
+
+  build:exercises:
+    desc: Build all chapter exercise packages
+    cmds:
+      - ./scripts/build-all.sh
+
+  build:book:
+    desc: Build the mdBook HTML output
+    cmds:
+      - mdbook build
+
+  serve:
+    desc: Serve the book with live reload
+    cmds:
+      - mdbook serve
+
+  # ── Exercises ──────────────────────────────────────────────────────────────
+
+  prepare:
+    desc: Reset all student solution templates (clears my_solutions.gleam)
+    cmds:
+      - ./scripts/prepare-exercises.sh

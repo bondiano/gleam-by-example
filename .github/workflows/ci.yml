@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test Gleam Exercises
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Erlang and Rebar3
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y erlang-base erlang-dev rebar3
+
+      - name: Install Gleam
+        run: |
+          GLEAM_VERSION="1.14.0"
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "x86_64" ]; then
+            GLEAM_ARCH="x86_64"
+          elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+            GLEAM_ARCH="aarch64"
+          fi
+          curl -Lo gleam.tar.gz "https://github.com/gleam-lang/gleam/releases/download/v${GLEAM_VERSION}/gleam-v${GLEAM_VERSION}-${GLEAM_ARCH}-unknown-linux-musl.tar.gz"
+          tar -xzf gleam.tar.gz
+          sudo mv gleam /usr/local/bin/
+          gleam --version
+
+      - name: Run tests for all chapters
+        run: ./scripts/test-all.sh
+
+  build:
+    name: Build Book
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Erlang and Rebar3
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y erlang-base erlang-dev rebar3
+
+      - name: Install Gleam
+        run: |
+          GLEAM_VERSION="1.14.0"
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "x86_64" ]; then
+            GLEAM_ARCH="x86_64"
+          elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+            GLEAM_ARCH="aarch64"
+          fi
+          curl -Lo gleam.tar.gz "https://github.com/gleam-lang/gleam/releases/download/v${GLEAM_VERSION}/gleam-v${GLEAM_VERSION}-${GLEAM_ARCH}-unknown-linux-musl.tar.gz"
+          tar -xzf gleam.tar.gz
+          sudo mv gleam /usr/local/bin/
+          gleam --version
+
+      - name: Setup mdBook
+        uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: '0.4.52'
+
+      - name: Build all exercises
+        run: ./scripts/build-all.sh
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: output
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

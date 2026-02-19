@@ -1,9 +1,9 @@
 //// Референсные решения — не подсматривайте, пока не попробуете сами!
 
-import chapter04.{type FSNode, Directory, File}
+import chapter04.{type FsQuery, type FSNode, Directory, File, FsQuery}
 import gleam/dict
-import gleam/int
 import gleam/list
+import gleam/option.{None, Some}
 import gleam/string
 
 pub fn total_size(node: FSNode) -> Int {
@@ -88,4 +88,45 @@ fn collect_dir_files(node: FSNode) -> List(#(String, List(String))) {
       }
     }
   }
+}
+
+// ── Упражнение 7: FsQuery builder ────────────────────────────────────────────
+
+pub fn new_query() -> FsQuery {
+  FsQuery(extension: None, min_size: None, max_size: None)
+}
+
+pub fn with_extension(q: FsQuery, ext: String) -> FsQuery {
+  FsQuery(..q, extension: Some(ext))
+}
+
+pub fn with_min_size(q: FsQuery, size: Int) -> FsQuery {
+  FsQuery(..q, min_size: Some(size))
+}
+
+pub fn with_max_size(q: FsQuery, size: Int) -> FsQuery {
+  FsQuery(..q, max_size: Some(size))
+}
+
+pub fn run_query(q: FsQuery, node: FSNode) -> List(String) {
+  collect_files(node)
+  |> list.filter_map(fn(pair) {
+    let #(name, size) = pair
+    let ok_ext = case q.extension {
+      None -> True
+      Some(ext) -> string.ends_with(name, ext)
+    }
+    let ok_min = case q.min_size {
+      None -> True
+      Some(min) -> size >= min
+    }
+    let ok_max = case q.max_size {
+      None -> True
+      Some(max) -> size <= max
+    }
+    case ok_ext && ok_min && ok_max {
+      True -> Ok(name)
+      False -> Error(Nil)
+    }
+  })
 }

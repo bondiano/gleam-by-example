@@ -1,0 +1,136 @@
+/*
+ * Gleam brand syntax highlighting theme for mdBook
+ * Colors sourced from gleam.run brand palette
+ */
+
+/* Base code block */
+.hljs {
+  color: #abb2bf;
+  background: transparent;
+}
+
+/* Keywords: pub fn let case import type if else use as opaque const todo panic echo */
+.hljs-keyword {
+  color: #ffd596;
+}
+
+/* String literals */
+.hljs-string {
+  color: #c8ffa7;
+}
+
+/* Numbers: integers and floats */
+.hljs-number {
+  color: #fdffab;
+}
+
+/* Function names (definitions and calls) */
+.hljs-title,
+.hljs-title.function_,
+.hljs-title.function_.invoke__ {
+  color: #9ce7ff;
+}
+
+/* Types, constructors, modules (capitalized) */
+.hljs-type,
+.hljs-built_in,
+.hljs-class .hljs-title {
+  color: #ffddfa;
+}
+
+/* Literals: True, False, Nil */
+.hljs-literal {
+  color: #ffddfa;
+}
+
+/* Comments */
+.hljs-comment,
+.hljs-quote {
+  color: #848484;
+  font-style: italic;
+}
+
+/* Operators and punctuation: ->, |>, <>, ==, != */
+.hljs-operator,
+.hljs-punctuation {
+  color: #ffaff3;
+}
+
+/* Variables / parameters */
+.hljs-variable,
+.hljs-params {
+  color: #abb2bf;
+}
+
+/* Attributes / annotations */
+.hljs-attribute,
+.hljs-meta {
+  color: #848484;
+}
+
+/* Errors */
+.hljs-deletion {
+  color: #ff6262;
+}
+
+/* Additions / success */
+.hljs-addition {
+  color: #c8ffa7;
+}
+
+/* Emphasis / bold in docs */
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: bold;
+}
+
+/* Light theme overrides */
+.light .hljs,
+html.light .hljs {
+  color: #383a42;
+}
+
+.light .hljs-keyword,
+html.light .hljs-keyword {
+  color: #a626a4;
+}
+
+.light .hljs-string,
+html.light .hljs-string {
+  color: #50a14f;
+}
+
+.light .hljs-number,
+html.light .hljs-number {
+  color: #986801;
+}
+
+.light .hljs-title,
+html.light .hljs-title,
+.light .hljs-title.function_,
+html.light .hljs-title.function_ {
+  color: #4078f2;
+}
+
+.light .hljs-type,
+html.light .hljs-type,
+.light .hljs-built_in,
+html.light .hljs-built_in,
+.light .hljs-literal,
+html.light .hljs-literal {
+  color: #584355;
+}
+
+.light .hljs-comment,
+html.light .hljs-comment {
+  color: #a0a1a7;
+}
+
+.light .hljs-operator,
+html.light .hljs-operator,
+.light .hljs-punctuation,
+html.light .hljs-punctuation {
+  color: #ca6ba6;
+}

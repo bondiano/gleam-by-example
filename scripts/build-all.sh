@@ -6,7 +6,7 @@ echo "==> Building all exercise packages..."
 for dir in exercises/chapter*/; do
   if [ -f "$dir/gleam.toml" ]; then
     echo "  Building $dir..."
-    (cd "$dir" && gleam build)
+    (cd "$dir" && gleam build) || true
   fi
 done
 

@@ -1,3 +1,7 @@
+# Node.js
+node_modules/
+package-lock.json
+
 # Gleam build artifacts
 build/
 erl_crash.dump

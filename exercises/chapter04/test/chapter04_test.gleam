@@ -103,3 +103,40 @@ pub fn group_by_directory_test() {
     #("test", ["main_test.gleam"]),
   ])
 }
+
+// --- FsQuery builder (упражнение 7) ---
+
+pub fn query_all_test() {
+  my_solutions.new_query()
+  |> my_solutions.run_query(sample_fs())
+  |> should.equal(["README.md", "main.gleam", "utils.gleam", "main_test.gleam"])
+}
+
+pub fn query_extension_test() {
+  my_solutions.new_query()
+  |> my_solutions.with_extension(".gleam")
+  |> my_solutions.run_query(sample_fs())
+  |> should.equal(["main.gleam", "utils.gleam", "main_test.gleam"])
+}
+
+pub fn query_min_size_test() {
+  my_solutions.new_query()
+  |> my_solutions.with_min_size(1000)
+  |> my_solutions.run_query(sample_fs())
+  |> should.equal(["README.md", "main.gleam", "main_test.gleam"])
+}
+
+pub fn query_max_size_test() {
+  my_solutions.new_query()
+  |> my_solutions.with_max_size(1000)
+  |> my_solutions.run_query(sample_fs())
+  |> should.equal(["utils.gleam"])
+}
+
+pub fn query_combined_test() {
+  my_solutions.new_query()
+  |> my_solutions.with_min_size(1000)
+  |> my_solutions.with_max_size(2000)
+  |> my_solutions.run_query(sample_fs())
+  |> should.equal(["README.md", "main_test.gleam"])
+}
