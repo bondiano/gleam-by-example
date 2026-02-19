@@ -1,0 +1,16 @@
+# Gleam build artifacts
+build/
+erl_crash.dump
+
+# mdBook output
+output/
+
+# OS files
+.DS_Store
+
+# Editor files
+*.swp
+*.swo
+*~
+.idea/
+.vscode/

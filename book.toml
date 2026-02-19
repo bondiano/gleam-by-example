@@ -1,0 +1,8 @@
+[book]
+title = "Gleam by Example"
+language = "ru"
+authors = ["Gleam by Example contributors"]
+src = "text"
+
+[build]
+build-dir = "output"

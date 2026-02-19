@@ -1,0 +1,535 @@
+# Начало работы
+
+> В этой главе мы установим Gleam, создадим первый проект и познакомимся с базовыми типами.
+
+## Цели главы
+
+В этой главе мы:
+
+- Установим Gleam и Erlang/OTP
+- Создадим первый проект и разберём его структуру
+- Познакомимся с базовыми типами: `Int`, `Float`, `String`, `Bool`
+- Научимся объявлять функции и использовать модули
+- Решим задачу Эйлера №1
+
+## Установка
+
+### Gleam
+
+Gleam можно установить несколькими способами:
+
+```sh
+# macOS (Homebrew)
+$ brew install gleam
+
+# С помощью asdf
+$ asdf plugin add gleam
+$ asdf install gleam latest
+$ asdf global gleam latest
+
+# Из исходников (нужен Rust)
+$ cargo install gleam
+```
+
+### Erlang/OTP
+
+Gleam компилирует код в Erlang, поэтому для запуска нужна виртуальная машина BEAM:
+
+```sh
+# macOS (Homebrew)
+$ brew install erlang
+
+# С помощью asdf
+$ asdf plugin add erlang
+$ asdf install erlang latest
+$ asdf global erlang latest
+```
+
+Проверим, что всё установлено:
+
+```sh
+$ gleam --version
+gleam 1.6.1
+
+$ erl -eval 'erlang:display(erlang:system_info(otp_release)), halt().' -noshell
+"27"
+```
+
+## Первый проект
+
+Создадим новый проект:
+
+```sh
+$ gleam new hello_gleam
+Your Gleam project hello_gleam has been successfully created.
+The project is in the hello_gleam directory.
+
+$ cd hello_gleam
+```
+
+### Структура проекта
+
+```
+hello_gleam/
+├── gleam.toml          # Конфигурация проекта
+├── src/
+│   └── hello_gleam.gleam   # Исходный код
+└── test/
+    └── hello_gleam_test.gleam  # Тесты
+```
+
+Файл `gleam.toml` — сердце проекта:
+
+```toml
+name = "hello_gleam"
+version = "1.0.0"
+target = "erlang"
+
+[dependencies]
+gleam_stdlib = ">= 0.44.0 and < 2.0.0"
+
+[dev-dependencies]
+gleeunit = ">= 1.0.0 and < 2.0.0"
+```
+
+Здесь указано имя проекта, таргет (Erlang по умолчанию) и зависимости. `gleam_stdlib` — стандартная библиотека, `gleeunit` — тестовый фреймворк.
+
+### Запуск и тестирование
+
+```sh
+# Скомпилировать и запустить
+$ gleam run
+Hello from hello_gleam!
+
+# Запустить тесты
+$ gleam test
+Compiled in 0.02s
+Running hello_gleam_test.main
+1 tests, 0 failures
+```
+
+### Другие полезные команды
+
+```sh
+# Добавить зависимость
+$ gleam add gleam_json
+
+# Отформатировать код
+$ gleam format
+
+# Собрать без запуска
+$ gleam build
+
+# Проверить типы
+$ gleam check
+
+# Сгенерировать документацию
+$ gleam docs build
+```
+
+`gleam format` — не опция, а стандарт: весь Gleam-код форматируется единообразно.
+
+## Базовые типы
+
+В Gleam четыре примитивных типа:
+
+### Int
+
+Целые числа произвольной точности (на BEAM-таргете):
+
+```gleam
+let x = 42
+let big = 1_000_000  // подчёркивания для читаемости
+let hex = 0xFF       // шестнадцатеричный литерал
+let oct = 0o77       // восьмеричный
+let bin = 0b1010     // двоичный
+```
+
+Арифметические операторы для целых чисел: `+`, `-`, `*`, `/` (целочисленное деление), `%` (остаток от деления).
+
+```gleam
+let sum = 2 + 3      // 5
+let diff = 10 - 4    // 6
+let prod = 3 * 7     // 21
+let quot = 10 / 3    // 3 (целочисленное деление)
+let rem = 10 % 3     // 1
+```
+
+### Float
+
+Числа с плавающей точкой (64-бит IEEE 754):
+
+```gleam
+let pi = 3.14159
+let negative = -0.5
+let scientific = 1.0e10
+```
+
+**Важно**: операторы для `Float` отличаются от операторов для `Int`. К ним добавляется точка:
+
+```gleam
+let sum = 2.0 +. 3.0     // 5.0
+let diff = 10.0 -. 4.0   // 6.0
+let prod = 3.0 *. 7.0    // 21.0
+let quot = 10.0 /. 3.0   // 3.333...
+```
+
+Это **принципиальное решение**: Gleam не допускает неявного приведения типов. Нельзя сложить `Int` и `Float` напрямую:
+
+```gleam
+// ✗ Ошибка компиляции!
+let result = 2 + 3.0
+
+// ✓ Нужно явно сконвертировать
+import gleam/int
+let result = int.to_float(2) +. 3.0
+```
+
+### String
+
+Строки в Gleam — последовательности UTF-8, заключённые в двойные кавычки:
+
+```gleam
+let greeting = "Привет, мир!"
+let empty = ""
+```
+
+Конкатенация строк — оператор `<>`:
+
+```gleam
+let name = "Gleam"
+let message = "Привет, " <> name <> "!"
+// "Привет, Gleam!"
+```
+
+Gleam не поддерживает интерполяцию строк — только конкатенацию. Чтобы вставить число в строку, нужно сначала сконвертировать:
+
+```gleam
+import gleam/int
+
+let age = 25
+let message = "Мне " <> int.to_string(age) <> " лет"
+```
+
+### Bool
+
+Логические значения — `True` и `False`:
+
+```gleam
+let is_active = True
+let is_admin = False
+```
+
+Операторы сравнения: `==`, `!=`, `<`, `>`, `<=`, `>=`. Логические операторы: `&&` (И), `||` (ИЛИ), `!` (НЕ).
+
+```gleam
+let a = True && False   // False
+let b = True || False   // True
+let c = !True           // False
+```
+
+Операторы `&&` и `||` — ленивые: правая часть не вычисляется, если результат уже определён по левой.
+
+## let-привязки
+
+В Gleam **все значения неизменяемые**. Ключевое слово `let` создаёт привязку имени к значению:
+
+```gleam
+let x = 42
+let y = x + 1  // 43
+```
+
+Повторная привязка (shadowing) допустима:
+
+```gleam
+let x = 10
+let x = x + 1  // x = 11, предыдущее значение затенено
+```
+
+Gleam требует, чтобы все привязки использовались. Для неиспользуемых значений есть два варианта:
+
+```gleam
+// Полностью отбросить значение
+let _ = some_function()
+
+// Дать имя с подчёркиванием — значение не используется,
+// но имя документирует намерение
+let _result = some_function()
+```
+
+`_` — анонимный discard, он не создаёт привязки и не попадет в рантайм. `_result` — именованный discard: компилятор не будет предупреждать о неиспользовании, но значение доступно (например, для отладки).
+
+### Блоки
+
+Блок `{ ... }` — группа выражений, результат блока — последнее выражение:
+
+```gleam
+let result = {
+  let a = 10
+  let b = 20
+  a + b
+}
+// result = 30
+```
+
+Блоки полезны для промежуточных вычислений внутри `let`.
+
+### Аннотации типов
+
+Gleam выводит типы автоматически, но аннотации можно указать явно:
+
+```gleam
+let name: String = "Gleam"
+let count: Int = 42
+let pi: Float = 3.14159
+```
+
+Аннотации не меняют поведение — требуются крайне редко, лишь документируют намерение и помогают компилятору выдавать более понятные ошибки.
+
+## Функции
+
+### Объявление функций
+
+Функции объявляются с помощью `fn`. Ключевое слово `pub` делает функцию публичной (видимой из других модулей):
+
+```gleam
+// Приватная функция (видна только в этом модуле)
+fn square(x: Int) -> Int {
+  x * x
+}
+
+// Публичная функция
+pub fn greet(name: String) -> Nil {
+  io.println("Привет, " <> name <> "!")
+}
+```
+
+Тело функции — блок. Возвращаемое значение — последнее выражение, ключевое слово `return` отсутствует.
+
+Типы параметров и возвращаемого значения указываются явно в сигнатуре.
+
+### Тип Nil
+
+`Nil` — аналог `void`/`unit` в других языках. Используется, когда функция выполняет побочный эффект (например, печать) и не возвращает полезного значения:
+
+```gleam
+pub fn greet(name: String) -> Nil {
+  io.println("Привет, " <> name <> "!")
+}
+```
+
+## Модули и импорты
+
+Каждый файл `.gleam` — отдельный модуль. Имя модуля соответствует пути к файлу: `src/math/utils.gleam` → модуль `math/utils`.
+
+### Импорт модулей
+
+```gleam
+// Импорт модуля — используем через квалифицированное имя
+import gleam/io
+io.println("Привет!")
+
+// Импорт конкретных функций — используем без префикса
+import gleam/io.{println}
+println("Привет!")
+
+// Импорт с переименованием
+import gleam/io as console
+console.println("Привет!")
+```
+
+### Импорт типов
+
+Типы из других модулей можно использовать через квалифицированное имя (`option.Option`) или импортировать напрямую с ключевым словом `type`:
+
+```gleam
+import gleam/option.{type Option}
+
+// Теперь можно писать Option вместо option.Option
+pub fn default_name(name: Option(String)) -> String {
+  option.unwrap(name, "Аноним")
+}
+```
+
+В Gleam принято импортировать типы неквалифицированно (`{type Option}`), а функции вызывать через имя модуля (`option.unwrap`). Это позволяет сразу видеть, откуда пришла функция, при этом типы не перегружают сигнатуры.
+
+### Стандартная библиотека
+
+Стандартная библиотека Gleam (`gleam_stdlib`) содержит модули для работы с основными типами:
+
+- `gleam/io` — вывод в консоль (`println`, `debug`)
+- `gleam/int` — операции с целыми числами (`to_string`, `to_float`, `parse`, `sum`, `max`, `min`, `is_even`, `is_odd`, `absolute_value`)
+- `gleam/float` — операции с числами с плавающей точкой (`to_string`, `parse`, `round`, `floor`, `ceiling`, `power`, `square_root`)
+
+Пример использования:
+
+```gleam
+import gleam/int
+import gleam/float
+import gleam/io
+
+pub fn main() {
+  // gleam/io
+  io.println("Привет!")
+  io.debug(42)         // выводит значение любого типа
+
+  // gleam/int
+  let n = 42
+  io.println(int.to_string(n))           // "42"
+  io.debug(int.is_even(n))               // True
+  io.debug(int.max(10, 20))              // 20
+
+  // gleam/float
+  let x = 9.0
+  io.debug(float.square_root(x))         // Ok(3.0)
+  io.debug(float.round(3.7))             // 4
+  io.debug(float.to_precision(3.14159, 2))  // 3.14
+}
+```
+
+### Конвертация типов
+
+В Gleam нет неявных приведений типов. Все конвертации — явные:
+
+```gleam
+import gleam/int
+import gleam/float
+
+// Int → Float
+let x = int.to_float(42)    // 42.0
+
+// Float → Int
+let y = float.round(3.7)    // 4
+let z = float.floor(3.7)    // 3
+let w = float.ceiling(3.2)  // 4
+let t = float.truncate(3.9) // 3
+
+// Int → String
+let s = int.to_string(42)   // "42"
+
+// String → Int
+let n = int.parse("42")     // Ok(42)
+let e = int.parse("abc")    // Error(Nil)
+```
+
+Обратите внимание: `int.parse` возвращает `Result(Int, Nil)`, а не `Int`. Если строка не является числом, мы получаем `Error(Nil)` вместо исключения. Подробнее о `Result` — в главе 5.
+
+## Проект: задача Эйлера №1
+
+> Найти сумму всех натуральных чисел меньше 1000, которые делятся на 3 или 5.
+
+Решим эту задачу, используя изученные концепции:
+
+```gleam
+import gleam/int
+import gleam/io
+import gleam/list
+
+pub fn euler1(limit: Int) -> Int {
+  list.range(1, limit)
+  |> list.filter(fn(x) { x % 3 == 0 || x % 5 == 0 })
+  |> int.sum
+}
+
+pub fn main() {
+  let answer = euler1(1000)
+  io.println("Ответ: " <> int.to_string(answer))
+  // Ответ: 233168
+}
+```
+
+Не беспокойтесь, если вам пока незнакомы `list.range`, `list.filter` или оператор `|>` — мы подробно разберём их в следующих главах. Пока достаточно понять общую идею:
+
+1. `list.range(1, limit)` создаёт список чисел от 1 до `limit` (не включая `limit`)
+2. `list.filter(...)` оставляет только числа, делящиеся на 3 или 5
+3. `int.sum` складывает все оставшиеся числа
+4. `|>` передаёт результат одной функции на вход следующей
+
+## Упражнения
+
+Решения упражнений пишите в файле `exercises/chapter02/test/my_solutions.gleam`. Запускайте тесты командой:
+
+```sh
+$ cd exercises/chapter02
+$ gleam test
+```
+
+### 1. Диагональ прямоугольника (Лёгкое)
+
+Напишите функцию `diagonal`, которая вычисляет длину диагонали прямоугольника по двум сторонам.
+
+```gleam
+pub fn diagonal(a: Float, b: Float) -> Float
+```
+
+Формула: \\( d = \sqrt{a^2 + b^2} \\)
+
+**Примеры:**
+
+```
+diagonal(3.0, 4.0) == 5.0
+diagonal(5.0, 12.0) == 13.0
+```
+
+**Подсказка:** используйте `float.square_root` из `gleam/float`. Функция возвращает `Result(Float, Nil)` — используйте `let assert Ok(result) = ...` для извлечения значения (мы подробно разберём `Result` позже).
+
+### 2. Конвертация температуры (Лёгкое)
+
+Напишите функцию `celsius_to_fahrenheit`, которая переводит градусы Цельсия в Фаренгейт.
+
+```gleam
+pub fn celsius_to_fahrenheit(c: Float) -> Float
+```
+
+Формула: \\( F = C \times \frac{9}{5} + 32 \\)
+
+**Примеры:**
+
+```
+celsius_to_fahrenheit(0.0) == 32.0
+celsius_to_fahrenheit(100.0) == 212.0
+```
+
+### 3. Обратная конвертация (Лёгкое)
+
+Напишите функцию `fahrenheit_to_celsius`, обратную к предыдущей.
+
+```gleam
+pub fn fahrenheit_to_celsius(f: Float) -> Float
+```
+
+**Примеры:**
+
+```
+fahrenheit_to_celsius(32.0) == 0.0
+fahrenheit_to_celsius(212.0) == 100.0
+```
+
+### 4. Задача Эйлера (Среднее)
+
+Напишите функцию `euler1`, которая находит сумму всех натуральных чисел меньше `n`, делящихся на 3 или 5.
+
+```gleam
+pub fn euler1(n: Int) -> Int
+```
+
+**Примеры:**
+
+```
+euler1(10) == 23       // 3 + 5 + 6 + 9 = 23
+euler1(1000) == 233168
+```
+
+**Подсказка:** используйте `list.range`, `list.filter` и `int.sum`.
+
+## Заключение
+
+В этой главе мы:
+
+- Установили Gleam и Erlang
+- Создали проект и разобрались в его структуре
+- Познакомились с четырьмя базовыми типами и их операторами
+- Научились объявлять функции и импортировать модули
+- Увидели, что Gleam не допускает неявных приведений типов
+
+В следующей главе мы глубже изучим функции: анонимные функции, pipe-оператор, use-выражения и pattern matching.
