@@ -10,9 +10,7 @@ pub fn main() -> Nil {
 
 pub fn escape_html_tags_test() {
   my_solutions.escape_html("<script>alert('xss')</script>")
-  |> should.equal(
-    "&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;",
-  )
+  |> should.equal("&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;")
 }
 
 pub fn escape_html_ampersand_test() {
@@ -93,10 +91,7 @@ pub fn linkify_multiple_urls_test() {
 // build_table
 
 pub fn build_table_test() {
-  my_solutions.build_table(
-    ["Name", "Age"],
-    [["Alice", "30"], ["Bob", "25"]],
-  )
+  my_solutions.build_table(["Name", "Age"], [["Alice", "30"], ["Bob", "25"]])
   |> should.equal(
     "<table><thead><tr><th>Name</th><th>Age</th></tr></thead><tbody><tr><td>Alice</td><td>30</td></tr><tr><td>Bob</td><td>25</td></tr></tbody></table>",
   )

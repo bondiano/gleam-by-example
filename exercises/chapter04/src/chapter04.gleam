@@ -11,8 +11,7 @@ pub type FSNode {
 /// Пример: pattern matching на пользовательских типах
 pub fn describe(node: FSNode) -> String {
   case node {
-    File(name:, size:) ->
-      name <> " (" <> int.to_string(size) <> " bytes)"
+    File(name:, size:) -> name <> " (" <> int.to_string(size) <> " bytes)"
     Directory(name:, children:) ->
       name <> "/ (" <> int.to_string(list.length(children)) <> " items)"
   }

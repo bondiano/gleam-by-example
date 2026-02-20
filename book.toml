@@ -7,5 +7,16 @@ src = "text"
 [build]
 build-dir = "output"
 
+[preprocessor.admonish]
+command = "mdbook-admonish"
+assets_version = "3.1.0" # do not edit: managed by `mdbook-admonish install`
+
+[preprocessor.toc]
+command = "mdbook-toc"
+renderer = ["html"]
+
 [output.html]
 additional-js = ["theme/gleam-highlight.js"]
+mathjax-support = true
+sidebar-header-nav = true
+additional-css = ["./mdbook-admonish.css"]

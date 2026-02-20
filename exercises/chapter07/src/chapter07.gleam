@@ -136,7 +136,15 @@ pub fn pokemon_decoder() -> decode.Decoder(Pokemon) {
     decode.list(ability_name_decoder()),
   )
   use stats <- decode.field("stats", decode.list(stat_decoder()))
-  decode.success(Pokemon(id:, name:, height:, weight:, types:, abilities:, stats:))
+  decode.success(Pokemon(
+    id:,
+    name:,
+    height:,
+    weight:,
+    types:,
+    abilities:,
+    stats:,
+  ))
 }
 
 pub fn parse_pokemon(json_str: String) -> Result(Pokemon, Nil) {
@@ -151,9 +159,7 @@ pub type PokedexError {
   MissingTypes
 }
 
-pub fn build_pokedex_entry(
-  json_str: String,
-) -> Result(Pokemon, PokedexError) {
+pub fn build_pokedex_entry(json_str: String) -> Result(Pokemon, PokedexError) {
   use pokemon <- result.try(
     parse_pokemon(json_str)
     |> result.map_error(fn(_) { InvalidJson }),

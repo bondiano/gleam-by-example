@@ -1,158 +1,273 @@
-// Тесты Lustre:
-// - Генерация HTML проверяется через element.to_string
-// - Полный MVU-цикл тестируется через lustre/dev/simulate
-
+import gleam/int
 import gleam/list
 import gleeunit
 import gleeunit/should
-import lustre/dev/simulate
-import lustre/element
 import my_solutions
+import qcheck
 
 pub fn main() -> Nil {
   gleeunit.main()
 }
 
-// ── Упражнение 1: todo_item_view ─────────────────────────────────────────
-// todo_item_view(text, done) рендерит один пункт списка.
-// done=False → <li>☐ <текст></li>
-// done=True  → <li class="done">✓ <текст></li>
+// ============================================================
+// Упражнение 1: is_sorted (unit-тесты)
+// ============================================================
 
-pub fn todo_item_not_done_test() {
-  my_solutions.todo_item_view("Buy milk", False)
-  |> element.to_string
-  |> should.equal("<li>☐ Buy milk</li>")
+pub fn is_sorted_empty_test() {
+  my_solutions.is_sorted([])
+  |> should.be_true
 }
 
-pub fn todo_item_done_test() {
-  my_solutions.todo_item_view("Write tests", True)
-  |> element.to_string
-  |> should.equal("<li class=\"done\">✓ Write tests</li>")
+pub fn is_sorted_single_test() {
+  my_solutions.is_sorted([1])
+  |> should.be_true
 }
 
-// ── Упражнение 2: render_todo_list ──────────────────────────────────────
-// render_todo_list([]) → <p class="empty">Список пуст</p>
-// render_todo_list(todos) → <ul><li>☐ ...</li>...</ul>
-
-pub fn render_todo_list_empty_test() {
-  my_solutions.render_todo_list([])
-  |> element.to_string
-  |> should.equal("<p class=\"empty\">Список пуст</p>")
+pub fn is_sorted_ascending_test() {
+  my_solutions.is_sorted([1, 2, 3, 4, 5])
+  |> should.be_true
 }
 
-pub fn render_todo_list_one_item_test() {
-  my_solutions.render_todo_list([#("Buy milk", False)])
-  |> element.to_string
-  |> should.equal("<ul><li>☐ Buy milk</li></ul>")
+pub fn is_sorted_descending_test() {
+  my_solutions.is_sorted([5, 4, 3, 2, 1])
+  |> should.be_false
 }
 
-pub fn render_todo_list_mixed_test() {
-  my_solutions.render_todo_list([#("Buy milk", False), #("Write tests", True)])
-  |> element.to_string
-  |> should.equal("<ul><li>☐ Buy milk</li><li class=\"done\">✓ Write tests</li></ul>")
+pub fn is_sorted_unsorted_test() {
+  my_solutions.is_sorted([1, 3, 2])
+  |> should.be_false
 }
 
-// ── Упражнение 3: counter_init ───────────────────────────────────────────
-// Начальное значение счётчика: 0
-// Принимает флаги (Nil при запуске приложения)
+pub fn is_sorted_equal_elements_test() {
+  my_solutions.is_sorted([3, 3, 3])
+  |> should.be_true
+}
 
-pub fn counter_init_test() {
-  my_solutions.counter_init(Nil)
+pub fn is_sorted_two_elements_sorted_test() {
+  my_solutions.is_sorted([1, 2])
+  |> should.be_true
+}
+
+pub fn is_sorted_two_elements_unsorted_test() {
+  my_solutions.is_sorted([2, 1])
+  |> should.be_false
+}
+
+pub fn is_sorted_negative_test() {
+  my_solutions.is_sorted([-5, -3, -1, 0, 2])
+  |> should.be_true
+}
+
+// ============================================================
+// Упражнение 2: encode_ints / decode_ints (unit + roundtrip)
+// ============================================================
+
+pub fn encode_decode_roundtrip_test() {
+  let original = [1, 2, 3, 4, 5]
+  original
+  |> my_solutions.encode_ints
+  |> my_solutions.decode_ints
+  |> should.equal(Ok(original))
+}
+
+pub fn encode_decode_empty_test() {
+  []
+  |> my_solutions.encode_ints
+  |> my_solutions.decode_ints
+  |> should.equal(Ok([]))
+}
+
+pub fn decode_invalid_json_test() {
+  my_solutions.decode_ints("not json")
+  |> should.be_error
+}
+
+pub fn decode_wrong_type_test() {
+  my_solutions.decode_ints("[\"a\", \"b\"]")
+  |> should.be_error
+}
+
+pub fn encode_decode_negative_test() {
+  let original = [-10, -5, 0, 5, 10]
+  original
+  |> my_solutions.encode_ints
+  |> my_solutions.decode_ints
+  |> should.equal(Ok(original))
+}
+
+// PBT: roundtrip для произвольных списков
+pub fn encode_decode_roundtrip_pbt_test() {
+  use xs <- qcheck.given(qcheck.list_from(qcheck.uniform_int()))
+  xs
+  |> my_solutions.encode_ints
+  |> my_solutions.decode_ints
+  |> should.equal(Ok(xs))
+}
+
+// ============================================================
+// Упражнение 3: my_sort (PBT)
+// ============================================================
+
+// Unit-тесты
+pub fn my_sort_empty_test() {
+  my_solutions.my_sort([])
+  |> should.equal([])
+}
+
+pub fn my_sort_single_test() {
+  my_solutions.my_sort([42])
+  |> should.equal([42])
+}
+
+pub fn my_sort_already_sorted_test() {
+  my_solutions.my_sort([1, 2, 3])
+  |> should.equal([1, 2, 3])
+}
+
+pub fn my_sort_reverse_test() {
+  my_solutions.my_sort([3, 2, 1])
+  |> should.equal([1, 2, 3])
+}
+
+pub fn my_sort_duplicates_test() {
+  my_solutions.my_sort([3, 1, 3, 1, 2])
+  |> should.equal([1, 1, 2, 3, 3])
+}
+
+// PBT: результат отсортирован
+pub fn my_sort_is_sorted_pbt_test() {
+  use xs <- qcheck.given(qcheck.list_from(qcheck.uniform_int()))
+  my_solutions.my_sort(xs)
+  |> my_solutions.is_sorted
+  |> should.be_true
+}
+
+// PBT: длина сохраняется
+pub fn my_sort_preserves_length_pbt_test() {
+  use xs <- qcheck.given(qcheck.list_from(qcheck.uniform_int()))
+  list.length(my_solutions.my_sort(xs))
+  |> should.equal(list.length(xs))
+}
+
+// PBT: идемпотентность
+pub fn my_sort_idempotent_pbt_test() {
+  use xs <- qcheck.given(qcheck.list_from(qcheck.uniform_int()))
+  let sorted = my_solutions.my_sort(xs)
+  my_solutions.my_sort(sorted)
+  |> should.equal(sorted)
+}
+
+// PBT: сохранение элементов (те же элементы, что на входе)
+pub fn my_sort_preserves_elements_pbt_test() {
+  use xs <- qcheck.given(qcheck.list_from(qcheck.uniform_int()))
+  let sorted = my_solutions.my_sort(xs)
+  list.sort(sorted, int.compare)
+  |> should.equal(list.sort(xs, int.compare))
+}
+
+// ============================================================
+// Упражнение 4: int_in_range (PBT генератор)
+// ============================================================
+
+pub fn int_in_range_lower_bound_pbt_test() {
+  let lo = 10
+  let hi = 100
+  use n <- qcheck.given(my_solutions.int_in_range(lo, hi))
+  { n >= lo }
+  |> should.be_true
+}
+
+pub fn int_in_range_upper_bound_pbt_test() {
+  let lo = -50
+  let hi = 50
+  use n <- qcheck.given(my_solutions.int_in_range(lo, hi))
+  { n <= hi }
+  |> should.be_true
+}
+
+pub fn int_in_range_single_value_pbt_test() {
+  use n <- qcheck.given(my_solutions.int_in_range(42, 42))
+  n
+  |> should.equal(42)
+}
+
+pub fn int_in_range_negative_pbt_test() {
+  let lo = -100
+  let hi = -10
+  use n <- qcheck.given(my_solutions.int_in_range(lo, hi))
+  { n >= lo && n <= hi }
+  |> should.be_true
+}
+
+// ============================================================
+// Упражнение 5: clamp (unit + PBT)
+// ============================================================
+
+// Unit-тесты
+pub fn clamp_in_range_test() {
+  my_solutions.clamp(5, 1, 10)
+  |> should.equal(5)
+}
+
+pub fn clamp_below_test() {
+  my_solutions.clamp(-3, 0, 100)
   |> should.equal(0)
 }
 
-// ── Упражнение 4: counter_update ────────────────────────────────────────
-// Функция обновления счётчика
-
-pub fn counter_increment_test() {
-  my_solutions.counter_update(0, my_solutions.CounterIncrement)
-  |> should.equal(1)
+pub fn clamp_above_test() {
+  my_solutions.clamp(999, 0, 100)
+  |> should.equal(100)
 }
 
-pub fn counter_decrement_test() {
-  my_solutions.counter_update(5, my_solutions.CounterDecrement)
-  |> should.equal(4)
-}
-
-pub fn counter_reset_test() {
-  my_solutions.counter_update(42, my_solutions.CounterReset)
+pub fn clamp_at_lower_boundary_test() {
+  my_solutions.clamp(0, 0, 100)
   |> should.equal(0)
 }
 
-// ── Упражнение 5: полный MVU цикл через simulate ─────────────────────────
-// Тест запускает полное приложение и отправляет сообщения
+pub fn clamp_at_upper_boundary_test() {
+  my_solutions.clamp(100, 0, 100)
+  |> should.equal(100)
+}
 
-pub fn counter_simulate_increment_test() {
-  simulate.simple(
-    init: my_solutions.counter_init,
-    update: my_solutions.counter_update,
-    view: my_solutions.counter_view,
+pub fn clamp_negative_range_test() {
+  my_solutions.clamp(-50, -100, -10)
+  |> should.equal(-50)
+}
+
+// PBT: результат всегда >= lo
+pub fn clamp_lower_bound_pbt_test() {
+  use n <- qcheck.given(qcheck.uniform_int())
+  let lo = 0
+  let hi = 100
+  { my_solutions.clamp(n, lo, hi) >= lo }
+  |> should.be_true
+}
+
+// PBT: результат всегда <= hi
+pub fn clamp_upper_bound_pbt_test() {
+  use n <- qcheck.given(qcheck.uniform_int())
+  let lo = 0
+  let hi = 100
+  { my_solutions.clamp(n, lo, hi) <= hi }
+  |> should.be_true
+}
+
+// PBT: идемпотентность
+pub fn clamp_idempotent_pbt_test() {
+  use n <- qcheck.given(qcheck.uniform_int())
+  let lo = -50
+  let hi = 50
+  let once = my_solutions.clamp(n, lo, hi)
+  let twice = my_solutions.clamp(once, lo, hi)
+  once
+  |> should.equal(twice)
+}
+
+// PBT: если значение в диапазоне — не меняется
+pub fn clamp_identity_in_range_pbt_test() {
+  use n <- qcheck.given(
+    qcheck.map(qcheck.uniform_int(), fn(n) { int.absolute_value(n) % 101 }),
   )
-  |> simulate.start(Nil)
-  |> simulate.message(my_solutions.CounterIncrement)
-  |> simulate.message(my_solutions.CounterIncrement)
-  |> simulate.message(my_solutions.CounterIncrement)
-  |> simulate.model
-  |> should.equal(3)
-}
-
-pub fn counter_simulate_decrement_test() {
-  simulate.simple(
-    init: my_solutions.counter_init,
-    update: my_solutions.counter_update,
-    view: my_solutions.counter_view,
-  )
-  |> simulate.start(Nil)
-  |> simulate.message(my_solutions.CounterIncrement)
-  |> simulate.message(my_solutions.CounterIncrement)
-  |> simulate.message(my_solutions.CounterDecrement)
-  |> simulate.model
-  |> should.equal(1)
-}
-
-pub fn counter_simulate_reset_test() {
-  simulate.simple(
-    init: my_solutions.counter_init,
-    update: my_solutions.counter_update,
-    view: my_solutions.counter_view,
-  )
-  |> simulate.start(Nil)
-  |> simulate.message(my_solutions.CounterIncrement)
-  |> simulate.message(my_solutions.CounterIncrement)
-  |> simulate.message(my_solutions.CounterReset)
-  |> simulate.model
-  |> should.equal(0)
-}
-
-// ── Упражнение 6: todo_update ────────────────────────────────────────────
-// Функция обновления для списка задач
-// AddTodo добавляет задачу с id = list.length(todos) + 1
-// ToggleTodo переключает todo.done по id
-// DeleteTodo удаляет задачу по id
-
-pub fn todo_update_add_test() {
-  my_solutions.todo_update([], my_solutions.AddTodo("Buy milk"))
-  |> should.equal([my_solutions.TodoItem(id: 1, text: "Buy milk", done: False)])
-}
-
-pub fn todo_update_add_second_test() {
-  let existing = [my_solutions.TodoItem(id: 1, text: "Buy milk", done: False)]
-  my_solutions.todo_update(existing, my_solutions.AddTodo("Write code"))
-  |> list.length
-  |> should.equal(2)
-}
-
-pub fn todo_update_toggle_test() {
-  let todos = [my_solutions.TodoItem(id: 1, text: "Buy milk", done: False)]
-  my_solutions.todo_update(todos, my_solutions.ToggleTodo(1))
-  |> should.equal([my_solutions.TodoItem(id: 1, text: "Buy milk", done: True)])
-}
-
-pub fn todo_update_delete_test() {
-  let todos = [
-    my_solutions.TodoItem(id: 1, text: "Buy milk", done: False),
-    my_solutions.TodoItem(id: 2, text: "Write code", done: False),
-  ]
-  my_solutions.todo_update(todos, my_solutions.DeleteTodo(1))
-  |> should.equal([my_solutions.TodoItem(id: 2, text: "Write code", done: False)])
+  my_solutions.clamp(n, 0, 100)
+  |> should.equal(n)
 }

@@ -1,181 +1,100 @@
-import gleam/dict.{type Dict}
-import gleam/erlang/process.{type Subject}
-import gleam/int
-import gleam/io
-import gleam/list
-import gleam/otp/actor
-import gleam/result
+//// Примеры кода из Главы 8: Erlang FFI и системное программирование
+
+import gleam/erlang/atom
+import gleam/erlang/charlist
+import gleam/erlang/process
 
 // ============================================================
-// Пример: актор-счётчик
+// Вспомогательные типы для примеров
 // ============================================================
 
-/// Тип сообщений для счётчика
-pub type CounterMsg {
-  Increment
-  Decrement
-  GetCount(reply_to: Subject(Int))
-  Reset
+pub type Pid =
+  process.Pid
+
+// ============================================================
+// Пример 1: External functions для Erlang
+// ============================================================
+
+/// Публичная обёртка для получения системного времени
+@external(erlang, "os", "system_time")
+pub fn os_system_time(unit: atom.Atom) -> Int
+
+// ============================================================
+// Пример 2: External types
+// ============================================================
+
+/// Reference — уникальный идентификатор в Erlang
+pub type Reference
+
+@external(erlang, "erlang", "make_ref")
+pub fn make_reference() -> Reference
+
+@external(erlang, "erlang", "ref_to_list")
+fn reference_to_charlist(ref: Reference) -> charlist.Charlist
+
+pub fn reference_to_string(ref: Reference) -> String {
+  reference_to_charlist(ref)
+  |> charlist.to_string
 }
 
-/// Обработчик сообщений счётчика
-fn handle_counter(
-  state: Int,
-  message: CounterMsg,
-) -> actor.Next(Int, CounterMsg) {
-  case message {
-    Increment -> actor.continue(state + 1)
-    Decrement -> actor.continue(state - 1)
-    GetCount(reply_to) -> {
-      process.send(reply_to, state)
-      actor.continue(state)
-    }
-    Reset -> actor.continue(0)
+// ============================================================
+// Пример 3: Работа с атомами
+// ============================================================
+
+/// Безопасный LogLevel тип
+pub type LogLevel {
+  Debug
+  Info
+  Warning
+  LogError
+}
+
+pub fn log_level_to_atom(level: LogLevel) -> atom.Atom {
+  case level {
+    Debug -> atom.create("debug")
+    Info -> atom.create("info")
+    Warning -> atom.create("warning")
+    LogError -> atom.create("error")
   }
 }
 
-/// Запускает актор-счётчик
-pub fn start_counter() -> Result(Subject(CounterMsg), actor.StartError) {
-  actor.new(0)
-  |> actor.on_message(handle_counter)
-  |> actor.start
-  |> result.map(fn(started) { started.data })
-}
-
-/// Получить текущее значение счётчика
-pub fn get_count(counter: Subject(CounterMsg)) -> Int {
-  actor.call(counter, waiting: 1000, sending: GetCount)
-}
-
-// ============================================================
-// Пример: актор-стек (из текста главы)
-// ============================================================
-
-/// Тип сообщений для стека
-pub type StackMsg(a) {
-  Push(value: a)
-  Pop(reply_to: Subject(Result(a, Nil)))
-  StackSize(reply_to: Subject(Int))
-}
-
-/// Обработчик сообщений стека
-fn handle_stack(
-  stack: List(a),
-  message: StackMsg(a),
-) -> actor.Next(List(a), StackMsg(a)) {
-  case message {
-    Push(value) -> actor.continue([value, ..stack])
-
-    Pop(reply_to) -> {
-      case stack {
-        [] -> {
-          process.send(reply_to, Error(Nil))
-          actor.continue([])
-        }
-        [top, ..rest] -> {
-          process.send(reply_to, Ok(top))
-          actor.continue(rest)
-        }
-      }
-    }
-
-    StackSize(reply_to) -> {
-      process.send(reply_to, list.length(stack))
-      actor.continue(stack)
-    }
+pub fn log_level_from_atom(a: atom.Atom) -> Result(LogLevel, Nil) {
+  case atom.to_string(a) {
+    "debug" -> Ok(Debug)
+    "info" -> Ok(Info)
+    "warning" -> Ok(Warning)
+    "error" -> Ok(LogError)
+    _ -> Error(Nil)
   }
 }
 
-/// Запускает актор-стек
-pub fn start_stack() -> Result(Subject(StackMsg(a)), actor.StartError) {
-  actor.new([])
-  |> actor.on_message(handle_stack)
-  |> actor.start
-  |> result.map(fn(started) { started.data })
-}
-
 // ============================================================
-// Пример: параллельные вычисления
+// Пример 4: Чтение файла через Erlang file API
 // ============================================================
 
-/// Запускает функцию в отдельном процессе и возвращает результат
-pub fn run_in_process(f: fn() -> a) -> a {
-  let subject = process.new_subject()
-  process.start(fn() { process.send(subject, f()) }, True)
-  let assert Ok(result) = process.receive(subject, 5000)
-  result
-}
+@external(erlang, "file", "read_file")
+fn erl_read_file(path: charlist.Charlist) -> Result(BitArray, atom.Atom)
 
-// ============================================================
-// Пример: Key-Value Store
-// ============================================================
+pub fn read_file(path: String) -> Result(BitArray, String) {
+  let charlist_path = charlist.from_string(path)
 
-/// Тип сообщений для KV-хранилища
-pub type KvStoreMsg {
-  KvPut(key: String, value: String)
-  KvGet(key: String, reply_to: Subject(Result(String, Nil)))
-  KvDelete(key: String)
-  KvKeys(reply_to: Subject(List(String)))
-}
-
-/// Обработчик сообщений KV-хранилища
-fn handle_kv(
-  state: Dict(String, String),
-  message: KvStoreMsg,
-) -> actor.Next(Dict(String, String), KvStoreMsg) {
-  case message {
-    KvPut(key:, value:) -> actor.continue(dict.insert(state, key, value))
-    KvGet(key:, reply_to:) -> {
-      process.send(reply_to, dict.get(state, key))
-      actor.continue(state)
-    }
-    KvDelete(key:) -> actor.continue(dict.delete(state, key))
-    KvKeys(reply_to:) -> {
-      process.send(reply_to, dict.keys(state))
-      actor.continue(state)
-    }
+  case erl_read_file(charlist_path) {
+    Ok(contents) -> Ok(contents)
+    Error(reason) -> Error("failed to read: " <> atom.to_string(reason))
   }
 }
 
-/// Запускает KV-хранилище
-pub fn start_kv_store() -> Result(Subject(KvStoreMsg), actor.StartError) {
-  actor.new(dict.new())
-  |> actor.on_message(handle_kv)
-  |> actor.start
-  |> result.map(fn(started) { started.data })
-}
-
 // ============================================================
-// Пример: использование Selector
+// Пример 5: Работа с процессами
 // ============================================================
 
-/// Демонстрация Selector — получение из нескольких источников
-pub fn selector_demo() -> String {
-  let string_subject = process.new_subject()
-  let int_subject = process.new_subject()
+@external(erlang, "erlang", "self")
+pub fn self() -> process.Pid
 
-  process.send(int_subject, 42)
-  process.send(string_subject, "hello")
+@external(erlang, "erlang", "pid_to_list")
+fn pid_to_charlist(pid: process.Pid) -> charlist.Charlist
 
-  let selector =
-    process.new_selector()
-    |> process.select(string_subject)
-    |> process.select_map(int_subject, int.to_string)
-
-  case process.selector_receive(selector, 100) {
-    Ok(value) -> value
-    Error(Nil) -> "таймаут"
-  }
-}
-
-pub fn main() {
-  let assert Ok(counter) = start_counter()
-
-  actor.send(counter, Increment)
-  actor.send(counter, Increment)
-  actor.send(counter, Increment)
-  actor.send(counter, Decrement)
-
-  let count = get_count(counter)
-  io.println("Счётчик: " <> int.to_string(count))
+pub fn pid_to_string_example(pid: process.Pid) -> String {
+  pid_to_charlist(pid)
+  |> charlist.to_string
 }

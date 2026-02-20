@@ -1,94 +1,59 @@
 //// Здесь вы можете писать свои решения упражнений.
-////
-//// Запуск тестов: gleam test
+//// Тема: Тестирование — unit-тесты, PBT с qcheck, snapshot с birdie.
 
-import lustre/element.{type Element}
+import gleam/dynamic/decode
+import gleam/int
+import gleam/json
+import gleam/list
+import gleam/result
+import qcheck
 
-// ── Упражнение 1 ─────────────────────────────────────────────────────────
-// Рендерит одну задачу как HTML-элемент <li>.
-//
-// todo_item_view("Buy milk", False)  → <li>☐ Buy milk</li>
-// todo_item_view("Write tests", True) → <li class="done">✓ Write tests</li>
-//
-// Подсказка:
-//   html.li([attribute.class("done")], [...]) — с классом
-//   html.li([], [...])                        — без класса
-//   element.text("☐ " <> text)               — для текста
+// ============================================================
+// Упражнение 1: is_sorted
+// ============================================================
 
-pub fn todo_item_view(text: String, done: Bool) -> Element(msg) {
+/// Проверяет, отсортирован ли список по возрастанию.
+pub fn is_sorted(xs: List(Int)) -> Bool {
   todo
 }
 
-// ── Упражнение 2 ─────────────────────────────────────────────────────────
-// Рендерит список задач.
-//
-// render_todo_list([]) → <p class="empty">Список пуст</p>
-// render_todo_list([#("Buy milk", False)]) → <ul><li>☐ Buy milk</li></ul>
-//
-// Подсказка:
-//   case todos { [] -> ... items -> html.ul([], list.map(items, ...)) }
-//   todo_item_view из упражнения 1 — для каждого элемента
+// ============================================================
+// Упражнение 2: encode_ints / decode_ints
+// ============================================================
 
-pub fn render_todo_list(todos: List(#(String, Bool))) -> Element(msg) {
+/// Кодирует список целых чисел в JSON-строку.
+pub fn encode_ints(xs: List(Int)) -> String {
   todo
 }
 
-// ── Упражнения 3-5: счётчик (Model-View-Update) ──────────────────────────
-
-/// Тип сообщений счётчика.
-pub type CounterMsg {
-  CounterIncrement
-  CounterDecrement
-  CounterReset
-}
-
-/// Начальное состояние счётчика.
-/// Принимает флаги (Nil). Должно вернуть 0.
-pub fn counter_init(_flags) -> Int {
+/// Декодирует JSON-строку в список целых чисел.
+pub fn decode_ints(s: String) -> Result(List(Int), Nil) {
   todo
 }
 
-/// Обновление счётчика.
-///
-/// CounterIncrement → +1
-/// CounterDecrement → -1
-/// CounterReset     → 0
-pub fn counter_update(model: Int, msg: CounterMsg) -> Int {
+// ============================================================
+// Упражнение 3: my_sort
+// ============================================================
+
+/// Сортирует список целых чисел по возрастанию.
+pub fn my_sort(xs: List(Int)) -> List(Int) {
   todo
 }
 
-/// View-функция счётчика.
-/// Должна вернуть любой Element(CounterMsg) — содержимое не тестируется.
-///
-/// Подсказка: html.div([], [html.button([event.on_click(CounterIncrement)], [...]), ...])
-pub fn counter_view(model: Int) -> Element(CounterMsg) {
+// ============================================================
+// Упражнение 4: int_in_range
+// ============================================================
+
+/// Создаёт генератор целых чисел в диапазоне [lo, hi].
+pub fn int_in_range(lo: Int, hi: Int) -> qcheck.Generator(Int) {
   todo
 }
 
-// ── Упражнение 6: TODO-список (Model-View-Update) ────────────────────────
+// ============================================================
+// Упражнение 5: clamp
+// ============================================================
 
-/// Тип одной задачи.
-pub type TodoItem {
-  TodoItem(id: Int, text: String, done: Bool)
-}
-
-/// Тип сообщений для TODO-списка.
-pub type TodoMsg {
-  AddTodo(text: String)
-  ToggleTodo(id: Int)
-  DeleteTodo(id: Int)
-}
-
-/// Обновление списка задач.
-///
-/// AddTodo(text)   — добавить задачу. id = list.length(todos) + 1
-/// ToggleTodo(id)  — переключить done у задачи с данным id
-/// DeleteTodo(id)  — удалить задачу с данным id
-///
-/// Подсказка:
-///   list.map(todos, fn(t) { case t.id == id { True -> TodoItem(..t, done: !t.done) False -> t } })
-///   list.filter(todos, fn(t) { t.id != id })
-
-pub fn todo_update(todos: List(TodoItem), msg: TodoMsg) -> List(TodoItem) {
+/// Ограничивает значение диапазоном [lo, hi].
+pub fn clamp(value: Int, lo: Int, hi: Int) -> Int {
   todo
 }

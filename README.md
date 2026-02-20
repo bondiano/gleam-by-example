@@ -4,7 +4,8 @@
 
 ## Описание
 
-**Gleam by Example** — это интерактивная книга, состоящая из 12 глав, каждая из которых содержит:
+**Gleam by Example** — это интерактивная книга, состоящая из 14 глав и приложений, каждая из которых содержит:
+
 - Теоретический материал с примерами кода
 - Практические упражнения для закрепления материала
 - Тесты для проверки правильности решений
@@ -12,12 +13,13 @@
 
 ## Структура проекта
 
-```
+```text
 gleam-by-example/
 ├── text/                   # Исходники книги (Markdown)
-│   ├── chapter01.md
+│   ├── chapter01.md        # Главы 1-14
 │   ├── chapter02.md
-│   └── ...
+│   ├── ...
+│   └── appendix_a.md       # Приложения
 ├── exercises/              # Упражнения (по одному Gleam-проекту на главу)
 │   ├── chapter02/
 │   │   ├── gleam.toml
@@ -27,7 +29,8 @@ gleam-by-example/
 │   │   │   └── my_solutions.gleam      # Шаблон для студента
 │   │   └── no-peeking/
 │   │       └── solutions.gleam         # Референсные решения
-│   └── ...
+│   ├── ...
+│   └── appendix_a/         # Упражнения для приложений
 ├── scripts/                # Скрипты автоматизации
 │   ├── test-all.sh         # Тестирование всех глав
 │   ├── build-all.sh        # Сборка всех глав + HTML книги
@@ -40,13 +43,17 @@ gleam-by-example/
 
 - **Главы 1-7** (Фазы 0-2): ✅ Текст и упражнения готовы
 - **Главы 8-9** (Фаза 3): ⚠️ Упражнения готовы, текст — заглушки
-- **Главы 10-12** (Фаза 4): ✅ Текст и упражнения готовы
+- **Главы 10-14** (Фаза 4): ✅ Текст и упражнения готовы
+- **Приложение A**: ✅ Telegram-бот — текст и упражнения готовы
 
 ### Особенности глав
 
-- **Глава 10**: Веб-приложение с Wisp, Mist и PostgreSQL (pog)
-- **Глава 11**: Frontend на Lustre (компиляция в JavaScript)
-- **Глава 12**: Telegram-бот с Telega, Wisp и PostgreSQL
+- **Глава 10**: Процессы и OTP (gleam_otp, gleam_erlang)
+- **Глава 11**: Тестирование
+- **Глава 12**: Веб-разработка с Wisp и Mist
+- **Глава 13**: Фронтенд на Lustre (компиляция в JavaScript)
+- **Глава 14**: Заключение и следующие шаги
+- **Приложение A**: Telegram-бот с Telega и Wisp
 
 ## Требования
 
@@ -153,12 +160,12 @@ cp /tmp/backup.gleam test/my_solutions.gleam
 
 ## Особенности отдельных глав
 
-### Глава 11 (Lustre/JavaScript)
+### Глава 13 (Lustre/JavaScript)
 
 Эта глава компилируется в JavaScript:
 
 ```bash
-cd exercises/chapter11
+cd exercises/chapter13
 
 # Тесты запускаются на JavaScript Runtime
 gleam test --target javascript
@@ -167,19 +174,20 @@ gleam test --target javascript
 gleam test
 ```
 
-### Главы 10 и 12 (PostgreSQL)
+### Глава 12 и Приложение A (Веб-разработка)
 
-Для работы с этими главами потребуется PostgreSQL:
+Эти главы используют веб-фреймворк Wisp и HTTP-сервер Mist:
 
 ```bash
-# Установка PostgreSQL (macOS)
-brew install postgresql
+cd exercises/chapter12
+# или
+cd exercises/appendix_a
 
-# Запуск PostgreSQL
-brew services start postgresql
+# Запуск тестов
+gleam test
 
-# Создание тестовой БД (пример)
-createdb gleam_example_dev
+# Запуск веб-сервера (если есть main)
+gleam run
 ```
 
 ## Советы и известные проблемы
@@ -213,6 +221,7 @@ import gleam/result
 ### Добавление нового упражнения
 
 1. Добавьте заглушку функции в `test/my_solutions.gleam`:
+
    ```gleam
    pub fn new_exercise(input: Int) -> Int {
      todo as "Реализуйте new_exercise"
@@ -220,6 +229,7 @@ import gleam/result
    ```
 
 2. Добавьте тест в `test/chapterXX_test.gleam`:
+
    ```gleam
    pub fn new_exercise_test() {
      my_solutions.new_exercise(5)
@@ -228,6 +238,7 @@ import gleam/result
    ```
 
 3. Добавьте решение в `no-peeking/solutions.gleam`:
+
    ```gleam
    pub fn new_exercise(input: Int) -> Int {
      input * input

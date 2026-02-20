@@ -2,6 +2,8 @@
 
 > Пользовательские типы, generics, списки, словари, множества и итераторы.
 
+<!-- toc -->
+
 ## Цели главы
 
 В этой главе мы:
@@ -795,7 +797,7 @@ let fs = Directory("project", [
 
 Это соответствует структуре:
 
-```
+```text
 project/
 ├── README.md          (1024 bytes)
 ├── src/
@@ -812,8 +814,8 @@ project/
 Решения пишите в файле `exercises/chapter04/test/my_solutions.gleam`. Тип `FSNode` уже импортирован. Запускайте тесты:
 
 ```sh
-$ cd exercises/chapter04
-$ gleam test
+cd exercises/chapter04
+gleam test
 ```
 
 Команды для перехода в директорию упражнения и запуска тестов, проверяющих ваши решения.
@@ -828,7 +830,7 @@ pub fn total_size(node: FSNode) -> Int
 
 **Примеры:**
 
-```
+```text
 total_size(File("a.txt", 100)) == 100
 total_size(sample_fs) == 5120  // 1024 + 2048 + 512 + 1536
 total_size(Directory("empty", [])) == 0
@@ -846,7 +848,7 @@ pub fn all_files(node: FSNode) -> List(String)
 
 **Примеры:**
 
-```
+```text
 all_files(sample_fs)
 == ["README.md", "main.gleam", "utils.gleam", "main_test.gleam"]
 
@@ -866,7 +868,7 @@ pub fn find_by_extension(node: FSNode, ext: String) -> List(String)
 
 **Примеры:**
 
-```
+```text
 find_by_extension(sample_fs, ".gleam")
 == ["main.gleam", "utils.gleam", "main_test.gleam"]
 
@@ -889,7 +891,7 @@ pub fn largest_file(node: FSNode) -> Result(#(String, Int), Nil)
 
 **Примеры:**
 
-```
+```text
 largest_file(sample_fs) == Ok(#("main.gleam", 2048))
 largest_file(Directory("empty", [])) == Error(Nil)
 ```
@@ -906,7 +908,7 @@ pub fn count_by_extension(node: FSNode) -> List(#(String, Int))
 
 **Примеры:**
 
-```
+```text
 count_by_extension(sample_fs)
 == [#(".gleam", 3), #(".md", 1)]
 ```
@@ -923,7 +925,7 @@ pub fn group_by_directory(node: FSNode) -> List(#(String, List(String)))
 
 **Примеры:**
 
-```
+```text
 group_by_directory(sample_fs)
 == [
   #("project", ["README.md"]),
@@ -952,7 +954,7 @@ pub fn run_query(q: FsQuery, node: FSNode) -> List(String)
 
 **Примеры:**
 
-```
+```text
 new_query()
 |> run_query(sample_fs)
 == ["README.md", "main.gleam", "utils.gleam", "main_test.gleam"]

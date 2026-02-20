@@ -1,4 +1,4 @@
-import chapter04.{Directory, File, type FSNode}
+import chapter04.{type FSNode, Directory, File}
 import gleeunit
 import gleeunit/should
 import my_solutions

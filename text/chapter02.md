@@ -2,6 +2,8 @@
 
 > В этой главе мы установим Gleam, создадим первый проект и познакомимся с базовыми типами.
 
+<!-- toc -->
+
 ## Цели главы
 
 В этой главе мы:
@@ -75,7 +77,7 @@ $ cd hello_gleam
 
 ### Структура проекта
 
-```
+```text
 hello_gleam/
 ├── gleam.toml          # Конфигурация проекта
 ├── src/
@@ -470,8 +472,8 @@ pub fn main() {
 Решения упражнений пишите в файле `exercises/chapter02/test/my_solutions.gleam`. Запускайте тесты командой:
 
 ```sh
-$ cd exercises/chapter02
-$ gleam test
+cd exercises/chapter02
+gleam test
 ```
 
 Команды выше позволяют перейти в папку упражнения и запустить тесты для проверки ваших решений.
@@ -488,7 +490,7 @@ pub fn diagonal(a: Float, b: Float) -> Float
 
 **Примеры:**
 
-```
+```text
 diagonal(3.0, 4.0) == 5.0
 diagonal(5.0, 12.0) == 13.0
 ```
@@ -507,7 +509,7 @@ pub fn celsius_to_fahrenheit(c: Float) -> Float
 
 **Примеры:**
 
-```
+```text
 celsius_to_fahrenheit(0.0) == 32.0
 celsius_to_fahrenheit(100.0) == 212.0
 ```
@@ -524,7 +526,7 @@ pub fn fahrenheit_to_celsius(f: Float) -> Float
 
 **Примеры:**
 
-```
+```text
 fahrenheit_to_celsius(32.0) == 0.0
 fahrenheit_to_celsius(212.0) == 100.0
 ```
@@ -541,7 +543,7 @@ pub fn euler1(n: Int) -> Int
 
 **Примеры:**
 
-```
+```text
 euler1(10) == 23       // 3 + 5 + 6 + 9 = 23
 euler1(1000) == 233168
 ```

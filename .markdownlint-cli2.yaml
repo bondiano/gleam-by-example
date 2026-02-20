@@ -9,6 +9,8 @@ config:
   MD013: false
   # Allow bare URLs (sometimes useful in exercises)
   MD034: false
+  # Disable link fragment validation (doesn't handle Cyrillic anchors well)
+  MD051: false
 
 globs:
   - "text/**/*.md"

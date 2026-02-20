@@ -2,6 +2,8 @@
 
 > Эта глава посвящена функциям как значениям первого класса, pipe-оператору и use-выражениям.
 
+<!-- toc -->
+
 ## Цели главы
 
 В этой главе мы:
@@ -41,7 +43,7 @@ pub fn apply_twice(f: fn(a) -> a, x: a) -> a {
 
 В Haskell, OCaml и PureScript каждая функция принимает ровно один аргумент, а многоаргументные функции — это цепочки функций, возвращающих функции:
 
-```
+```text
 -- Haskell: add :: Int -> Int -> Int
 -- На самом деле: add :: Int -> (Int -> Int)
 add x y = x + y
@@ -261,6 +263,219 @@ pub fn format_scores(scores: List(Int)) -> String {
 ```
 
 Функция `format_scores` сортирует результаты по убыванию и объединяет их в строку через запятую — весь конвейер записан без промежуточных переменных.
+
+## Отладка пайплайнов с `echo`
+
+### Проблема отладки в пайплайнах
+
+При работе с длинными цепочками pipe-операторов бывает сложно понять, какое значение имеет выражение на промежуточном этапе. Классический подход — разбить pipeline на шаги с промежуточными переменными или вставить вызов `io.debug`:
+
+```gleam
+import gleam/int
+import gleam/list
+import gleam/string
+
+pub fn format_scores(scores: List(Int)) -> String {
+  scores
+  |> list.sort(int.compare)
+  |> io.debug  // выводит отсортированный список
+  |> list.reverse
+  |> io.debug  // выводит перевёрнутый список
+  |> list.map(int.to_string)
+  |> string.join(", ")
+}
+```
+
+Проблема этого подхода:
+
+1. `io.debug` выводит только значение, без контекста (где именно это напечатано?)
+2. Приходится вручную добавлять и удалять вызовы `io.debug`
+3. Нет информации о файле и номере строки
+
+### Решение: ключевое слово `echo`
+
+Ключевое слово `echo` было добавлено в Gleam **v1.9.0** специально для удобной отладки пайплайнов. Синтаксис:
+
+```gleam
+value |> echo
+// или с меткой
+value |> echo("после сортировки")
+```
+
+`echo` печатает значение в консоль и **возвращает его без изменений**, позволяя продолжить цепочку pipe. Но в отличие от `io.debug`, `echo` автоматически показывает:
+
+- Имя файла
+- Номер строки
+- Опциональную метку
+- Само значение
+
+Пример с `echo`:
+
+```gleam
+import gleam/int
+import gleam/list
+import gleam/string
+
+pub fn format_scores(scores: List(Int)) -> String {
+  scores
+  |> list.sort(int.compare)
+  |> echo("после сортировки")
+  |> list.reverse
+  |> echo("после разворота")
+  |> list.map(int.to_string)
+  |> string.join(", ")
+}
+```
+
+Вывод в консоль:
+
+```text
+src/chapter03.gleam:8: после сортировки
+[5, 17, 42, 88]
+
+src/chapter03.gleam:10: после разворота
+[88, 42, 17, 5]
+```
+
+Сразу видно, **где** в коде произошёл вывод и **какое** значение было на этом этапе.
+
+### echo vs io.debug()
+
+| Функция | Показывает файл:строку | Принимает метку | Возвращает значение |
+| --------- | ------------------------ | ----------------- | --------------------- |
+| `echo` | ✓ | ✓ (опционально) | ✓ |
+| `io.debug` | ✗ | ✗ | ✓ |
+
+`io.debug` полезен для быстрого вывода в консоль, но для отладки сложных пайплайнов `echo` удобнее — не нужно гадать, в каком месте кода произошёл вывод.
+
+Ещё одно отличие: `echo` можно использовать **без импорта**. Это встроенное ключевое слово языка, а не функция из модуля.
+
+### Практические примеры
+
+#### Отладка трансформации данных
+
+Представим, что нужно обработать список чисел: оставить только положительные, удвоить их и найти сумму. На каком этапе список стал пустым?
+
+```gleam
+import gleam/int
+import gleam/list
+
+pub fn process_numbers(numbers: List(Int)) -> Int {
+  numbers
+  |> echo("исходный список")
+  |> list.filter(fn(n) { n > 0 })
+  |> echo("после фильтрации")
+  |> list.map(fn(n) { n * 2 })
+  |> echo("после удвоения")
+  |> int.sum
+}
+
+pub fn main() {
+  process_numbers([1, -2, 3, -4, 5])
+  |> io.debug
+}
+```
+
+Вывод:
+
+```text
+src/chapter03.gleam:6: исходный список
+[1, -2, 3, -4, 5]
+
+src/chapter03.gleam:8: после фильтрации
+[1, 3, 5]
+
+src/chapter03.gleam:10: после удвоения
+[2, 6, 10]
+
+18
+```
+
+Каждый шаг видимым — легко понять, как преобразуются данные.
+
+#### Отладка строковых операций
+
+Сложные преобразования строк тоже удобно отлаживать с `echo`:
+
+```gleam
+import gleam/string
+
+pub fn normalize_name(name: String) -> String {
+  name
+  |> echo("входная строка")
+  |> string.trim
+  |> echo("после trim")
+  |> string.lowercase
+  |> echo("после lowercase")
+  |> string.replace("_", " ")
+  |> echo("после замены _")
+}
+
+// normalize_name("  John_DOE  ")
+```
+
+Вывод:
+
+```text
+src/chapter03.gleam:5: входная строка
+"  John_DOE  "
+
+src/chapter03.gleam:7: после trim
+"John_DOE"
+
+src/chapter03.gleam:9: после lowercase
+"john_doe"
+
+src/chapter03.gleam:11: после замены _
+"john doe"
+```
+
+#### Отладка вложенных трансформаций
+
+`echo` работает на любом уровне вложенности:
+
+```gleam
+import gleam/int
+import gleam/list
+import gleam/string
+
+pub fn top_three_doubled(numbers: List(Int)) -> String {
+  numbers
+  |> echo("начальный список")
+  |> list.sort(int.compare)
+  |> list.reverse
+  |> echo("отсортировано по убыванию")
+  |> list.take(3)
+  |> echo("взято первые 3")
+  |> list.map(fn(n) {
+    let doubled = n * 2
+    echo(doubled, "удвоенное значение")
+    doubled
+  })
+  |> echo("после удвоения")
+  |> list.map(int.to_string)
+  |> string.join(", ")
+}
+```
+
+Вывод показывает все промежуточные значения — даже внутри `list.map`.
+
+#### Когда использовать echo
+
+✓ **Используйте `echo`, когда:**
+
+- Отлаживаете длинный pipeline
+- Хотите проверить промежуточные значения
+- Нужно понять, на каком шаге данные меняются неожиданным образом
+- Изучаете новую функцию или библиотеку
+
+✗ **Не используйте `echo` для:**
+
+- Production-логирования (используйте библиотеки логирования)
+- Вывода результатов пользователю (используйте `io.println`)
+- Постоянной отладки (используйте debugger или тесты)
+
+`echo` — **временный** инструмент для разработки. Перед коммитом кода удалите все вызовы `echo` (либо замените их на полноценное логирование, если нужно).
 
 ## use-выражения
 
@@ -539,8 +754,8 @@ pub fn main() {
 Решения пишите в файле `exercises/chapter03/test/my_solutions.gleam`. Запускайте тесты:
 
 ```sh
-$ cd exercises/chapter03
-$ gleam test
+cd exercises/chapter03
+gleam test
 ```
 
 Запускайте тесты после каждого упражнения, чтобы сразу видеть результат.
@@ -555,7 +770,7 @@ pub fn apply_twice(f: fn(a) -> a, x: a) -> a
 
 **Примеры:**
 
-```
+```text
 apply_twice(fn(x) { x * 2 }, 3) == 12
 apply_twice(fn(x) { x + 1 }, 0) == 2
 ```
@@ -572,7 +787,7 @@ pub fn add_exclamation(s: String) -> String
 
 **Примеры:**
 
-```
+```text
 add_exclamation("hello") == "hello!"
 add_exclamation("") == "!"
 ```
@@ -589,7 +804,7 @@ pub fn shout(s: String) -> String
 
 **Примеры:**
 
-```
+```text
 shout("hello") == "HELLO!"
 shout("gleam") == "GLEAM!"
 ```
@@ -606,7 +821,7 @@ pub fn safe_divide(a: Int, b: Int) -> Result(Int, String)
 
 **Примеры:**
 
-```
+```text
 safe_divide(10, 3) == Ok(3)
 safe_divide(10, 0) == Error("деление на ноль")
 ```
@@ -623,7 +838,7 @@ pub fn fizzbuzz(n: Int) -> String
 
 **Примеры:**
 
-```
+```text
 fizzbuzz(15) == "FizzBuzz"
 fizzbuzz(9) == "Fizz"
 fizzbuzz(10) == "Buzz"
@@ -639,6 +854,7 @@ fizzbuzz(7) == "7"
 - Функции как значения первого класса и анонимные функции
 - Отсутствие каррирования в Gleam и способы частичного применения
 - Pipe-оператор `|>` для построения конвейеров
+- Ключевое слово `echo` для отладки пайплайнов
 - use-выражения для устранения вложенных callback-ов
 - Case-выражения, pattern matching и guards
 - Модули `gleam/function`, `gleam/bool` и `gleam/order`

@@ -77,7 +77,13 @@ jobs:
       - name: Setup mdBook
         uses: peaceiris/actions-mdbook@v2
         with:
-          mdbook-version: '0.4.52'
+          mdbook-version: '0.4.40'
+
+      - name: Install mdbook plugins
+        run: |
+          cargo install mdbook-admonish --version 1.20.0
+          cargo install mdbook-toc --version 0.14.2
+          mdbook-admonish install .
 
       - name: Build all exercises
         run: ./scripts/build-all.sh

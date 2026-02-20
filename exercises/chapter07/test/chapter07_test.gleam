@@ -135,44 +135,48 @@ fn charizard_json() -> String {
 pub fn pokemon_decoder_pikachu_test() {
   my_solutions.parse_pokemon(pikachu_json())
   |> should.equal(
-    Ok(my_solutions.Pokemon(
-      id: 25,
-      name: "pikachu",
-      height: 4,
-      weight: 60,
-      types: ["electric"],
-      abilities: ["static", "lightning-rod"],
-      stats: [
-        my_solutions.PokemonStat("hp", 35),
-        my_solutions.PokemonStat("attack", 55),
-        my_solutions.PokemonStat("defense", 40),
-        my_solutions.PokemonStat("special-attack", 50),
-        my_solutions.PokemonStat("special-defense", 50),
-        my_solutions.PokemonStat("speed", 90),
-      ],
-    )),
+    Ok(
+      my_solutions.Pokemon(
+        id: 25,
+        name: "pikachu",
+        height: 4,
+        weight: 60,
+        types: ["electric"],
+        abilities: ["static", "lightning-rod"],
+        stats: [
+          my_solutions.PokemonStat("hp", 35),
+          my_solutions.PokemonStat("attack", 55),
+          my_solutions.PokemonStat("defense", 40),
+          my_solutions.PokemonStat("special-attack", 50),
+          my_solutions.PokemonStat("special-defense", 50),
+          my_solutions.PokemonStat("speed", 90),
+        ],
+      ),
+    ),
   )
 }
 
 pub fn pokemon_decoder_charizard_test() {
   my_solutions.parse_pokemon(charizard_json())
   |> should.equal(
-    Ok(my_solutions.Pokemon(
-      id: 6,
-      name: "charizard",
-      height: 17,
-      weight: 905,
-      types: ["fire", "flying"],
-      abilities: ["blaze", "solar-power"],
-      stats: [
-        my_solutions.PokemonStat("hp", 78),
-        my_solutions.PokemonStat("attack", 84),
-        my_solutions.PokemonStat("defense", 78),
-        my_solutions.PokemonStat("special-attack", 109),
-        my_solutions.PokemonStat("special-defense", 85),
-        my_solutions.PokemonStat("speed", 100),
-      ],
-    )),
+    Ok(
+      my_solutions.Pokemon(
+        id: 6,
+        name: "charizard",
+        height: 17,
+        weight: 905,
+        types: ["fire", "flying"],
+        abilities: ["blaze", "solar-power"],
+        stats: [
+          my_solutions.PokemonStat("hp", 78),
+          my_solutions.PokemonStat("attack", 84),
+          my_solutions.PokemonStat("defense", 78),
+          my_solutions.PokemonStat("special-attack", 109),
+          my_solutions.PokemonStat("special-defense", 85),
+          my_solutions.PokemonStat("speed", 100),
+        ],
+      ),
+    ),
   )
 }
 
@@ -263,23 +267,25 @@ pub fn search_results_first_page_test() {
 
   my_solutions.decode_search_results(json_str)
   |> should.equal(
-    Ok(my_solutions.SearchResults(
-      count: 1302,
-      next: option.Some(
-        "https://pokeapi.co/api/v2/pokemon?offset=20&limit=20",
+    Ok(
+      my_solutions.SearchResults(
+        count: 1302,
+        next: option.Some(
+          "https://pokeapi.co/api/v2/pokemon?offset=20&limit=20",
+        ),
+        previous: option.None,
+        results: [
+          my_solutions.NamedResource(
+            "bulbasaur",
+            "https://pokeapi.co/api/v2/pokemon/1/",
+          ),
+          my_solutions.NamedResource(
+            "ivysaur",
+            "https://pokeapi.co/api/v2/pokemon/2/",
+          ),
+        ],
       ),
-      previous: option.None,
-      results: [
-        my_solutions.NamedResource(
-          "bulbasaur",
-          "https://pokeapi.co/api/v2/pokemon/1/",
-        ),
-        my_solutions.NamedResource(
-          "ivysaur",
-          "https://pokeapi.co/api/v2/pokemon/2/",
-        ),
-      ],
-    )),
+    ),
   )
 }
 
@@ -296,21 +302,23 @@ pub fn search_results_middle_page_test() {
 
   my_solutions.decode_search_results(json_str)
   |> should.equal(
-    Ok(my_solutions.SearchResults(
-      count: 1302,
-      next: option.Some(
-        "https://pokeapi.co/api/v2/pokemon?offset=40&limit=20",
-      ),
-      previous: option.Some(
-        "https://pokeapi.co/api/v2/pokemon?offset=0&limit=20",
-      ),
-      results: [
-        my_solutions.NamedResource(
-          "spearow",
-          "https://pokeapi.co/api/v2/pokemon/21/",
+    Ok(
+      my_solutions.SearchResults(
+        count: 1302,
+        next: option.Some(
+          "https://pokeapi.co/api/v2/pokemon?offset=40&limit=20",
         ),
-      ],
-    )),
+        previous: option.Some(
+          "https://pokeapi.co/api/v2/pokemon?offset=0&limit=20",
+        ),
+        results: [
+          my_solutions.NamedResource(
+            "spearow",
+            "https://pokeapi.co/api/v2/pokemon/21/",
+          ),
+        ],
+      ),
+    ),
   )
 }
 
@@ -325,12 +333,14 @@ pub fn search_results_empty_test() {
 
   my_solutions.decode_search_results(json_str)
   |> should.equal(
-    Ok(my_solutions.SearchResults(
-      count: 0,
-      next: option.None,
-      previous: option.None,
-      results: [],
-    )),
+    Ok(
+      my_solutions.SearchResults(
+        count: 0,
+        next: option.None,
+        previous: option.None,
+        results: [],
+      ),
+    ),
   )
 }
 

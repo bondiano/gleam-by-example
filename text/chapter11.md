@@ -1,735 +1,716 @@
-# Фронтенд с Lustre
+# Тестирование
 
-> The Elm Architecture на Gleam — типобезопасный UI для браузера и сервера.
+> «Testing can be fun, actually» — Джакомо Кавальери, автор birdie
+
+<!-- toc -->
 
 ## Цели главы
 
 В этой главе мы:
 
-- Изучим Elm Architecture (TEA): Model → Update → View
-- Познакомимся с виртуальным DOM Lustre
-- Научимся работать с событиями и состоянием
-- Разберём эффекты (HTTP-запросы, таймеры)
-- Поймём, как Lustre работает на JavaScript-таргете
-- Рассмотрим server components — компоненты на сервере с WebSocket
-- Построим интерактивное TODO-приложение
+- Освоим gleeunit — стандартный тестовый фреймворк Gleam
+- Научимся писать выразительные утверждения с `should`
+- Изучим property-based testing (PBT) с qcheck
+- Познакомимся с генераторами и shrinking
+- Попробуем snapshot-тестирование с birdie
+- Разберём паттерны организации тестов
+- Научимся тестировать акторы и асинхронный код
+- Настроим CI с GitHub Actions
 
-## JavaScript-таргет Gleam
+## Зачем тестировать?
 
-Lustre работает в браузере — это JavaScript-среда. Gleam компилируется как для Erlang, так и для JavaScript:
+Gleam — строго типизированный язык, и компилятор ловит многие ошибки. Но типы не могут проверить всё:
 
-```bash
-# Сборка для браузера
-gleam build --target javascript
+- Правильность бизнес-логики (`sort` возвращает отсортированный список, а не просто `List(Int)`)
+- Граничные случаи (пустой список, отрицательные числа, unicode)
+- Взаимодействие компонентов (JSON encode → decode = оригинал?)
+- Регрессии (исправили баг — не сломали другое)
 
-# Запуск тестов на Node.js
-gleam test --target javascript
+Тесты дополняют типы: типы гарантируют **структурную** корректность, тесты — **семантическую**.
+
+## gleeunit — стандартный фреймворк
+
+`gleeunit` — стандартный тестовый раннер для Gleam. Он минималистичен: запускает все публичные функции с суффиксом `_test` в модулях из директории `test/`.
+
+### Структура теста
+
+```gleam
+// test/my_module_test.gleam
+import gleeunit
+import gleeunit/should
+import my_module
+
+pub fn main() -> Nil {
+  gleeunit.main()
+}
+
+pub fn add_test() {
+  my_module.add(1, 2)
+  |> should.equal(3)
+}
+
+pub fn add_zero_test() {
+  my_module.add(0, 0)
+  |> should.equal(0)
+}
 ```
 
-В `gleam.toml` можно задать таргет по умолчанию:
+Правила:
 
-```toml
-name = "my_app"
-version = "1.0.0"
-target = "javascript"
+- Файл в директории `test/`
+- Функция `main` вызывает `gleeunit.main()`
+- Каждый тест — публичная функция с суффиксом `_test`
+- Тесты не принимают аргументов и возвращают `Nil`
+
+### Запуск тестов
+
+```sh
+$ gleam test
+  Compiling chapter09
+   Compiled in 0.15s
+    Running chapter09_test.main
+.....
+5 tests passed
 ```
 
-> **Важно:** большинство модулей из `gleam_erlang` и `gleam_otp` не работают на JS-таргете. Lustre-проекты используют `gleam_stdlib` и JS-совместимые библиотеки.
+gleeunit выводит точку за каждый прошедший тест и итоговое число. При провале — подробный вывод с ожидаемым и полученным значением.
 
-## The Elm Architecture
+### Утверждения (assertions)
 
-Lustre реализует Elm Architecture (TEA) — архитектурный паттерн с однонаправленным потоком данных:
+Модуль `gleeunit/should` предоставляет набор утверждений:
 
+```gleam
+import gleeunit/should
+
+// Равенство
+1 + 1 |> should.equal(2)
+"hello" |> should.not_equal("world")
+
+// Result
+Ok(42) |> should.be_ok
+Error("oops") |> should.be_error
+
+// Bool
+True |> should.be_true
+False |> should.be_false
+
+// Безусловный провал
+should.fail()
 ```
-         ┌─────────────────────────────────┐
-         │                                 │
-    Msg  ▼                                 │
-  ┌──────────┐    new state   ┌──────────┐ │
-  │  update  │ ─────────────► │  model   │ │ Msg
-  └──────────┘                └──────────┘ │
-                                    │      │
-                                    ▼      │
-                              ┌──────────┐ │
-                              │   view   │ │
-                              └──────────┘ │
-                                    │      │
-                                    ▼      │
-                              виртуальный  │
-                                   DOM ────┘
-                                (события)
+
+Все функции `should.*` при неуспехе **паникуют** — тест считается проваленным, и gleeunit сообщает, какое значение ожидалось и какое получено.
+
+### Пример: тестирование чистых функций
+
+```gleam
+import gleam/string
+import gleeunit/should
+
+pub fn capitalize_test() {
+  string.capitalise("hello")
+  |> should.equal("Hello")
+}
+
+pub fn capitalize_empty_test() {
+  string.capitalise("")
+  |> should.equal("")
+}
+
+pub fn capitalize_already_test() {
+  string.capitalise("Hello")
+  |> should.equal("Hello")
+}
 ```
 
-Три компонента:
-1. **Model** — состояние приложения (иммутабельные данные)
-2. **Update** — чистая функция `fn(Model, Msg) -> Model`, которая создаёт новое состояние
-3. **View** — чистая функция `fn(Model) -> Element(Msg)`, которая строит виртуальный DOM
+Три теста покрывают обычный случай, граничный (пустая строка) и идемпотентный (уже с заглавной буквы). Каждый тест — маленькая история: «при таком входе — ожидаю такой выход».
 
-Нет мутаций, нет глобального состояния — только чистые функции.
-
-## Простое приложение: счётчик
+### Пример: тестирование Result
 
 ```gleam
 import gleam/int
-import lustre
-import lustre/element.{type Element}
-import lustre/element/html
-import lustre/event
+import gleeunit/should
 
-// 1. Модель — состояние приложения
-type Model =
-  Int
-
-// 2. Сообщения — возможные действия
-type Msg {
-  Increment
-  Decrement
-  Reset
+pub fn parse_valid_test() {
+  int.parse("42")
+  |> should.be_ok
+  |> should.equal(42)
 }
 
-// 3. Инициализация начального состояния
-fn init(_flags) -> Model {
-  0
-}
-
-// 4. Обновление состояния
-fn update(model: Model, msg: Msg) -> Model {
-  case msg {
-    Increment -> model + 1
-    Decrement -> model - 1
-    Reset -> 0
-  }
-}
-
-// 5. Отображение состояния
-fn view(model: Model) -> Element(Msg) {
-  html.div([], [
-    html.h1([], [element.text("Счётчик: " <> int.to_string(model))]),
-    html.button([event.on_click(Increment)], [element.text("+")]),
-    html.button([event.on_click(Decrement)], [element.text("-")]),
-    html.button([event.on_click(Reset)], [element.text("Сброс")]),
-  ])
-}
-
-// 6. Запуск приложения
-pub fn main() {
-  let app = lustre.simple(init, update, view)
-  let assert Ok(_) = lustre.start(app, "#app", Nil)
-  Nil
+pub fn parse_invalid_test() {
+  int.parse("not a number")
+  |> should.be_error
 }
 ```
 
-`lustre.simple` — для приложений без побочных эффектов. `lustre.start` монтирует приложение в DOM-элемент с селектором `#app`.
+Обратите внимание на цепочку: `should.be_ok` возвращает значение внутри `Ok`, поэтому можно продолжить `|> should.equal(42)`.
 
-## Виртуальный DOM
+### Организация тестов
 
-Lustre строит виртуальное дерево элементов, которое затем эффективно синхронизируется с реальным DOM браузера.
-
-### lustre/element
+Хорошие практики организации:
 
 ```gleam
-import lustre/element.{type Element}
+// Группируйте тесты по функции с комментариями-разделителями
+// ============================================================
+// Тесты для sort
+// ============================================================
 
-// Текстовый узел
-element.text("Привет!")
+pub fn sort_empty_test() { ... }
+pub fn sort_single_test() { ... }
+pub fn sort_already_sorted_test() { ... }
+pub fn sort_reverse_test() { ... }
 
-// Произвольный элемент
-element.element("my-component", [], [element.text("контент")])
+// ============================================================
+// Тесты для filter
+// ============================================================
 
-// Фрагмент (несколько узлов без обёртки)
-element.fragment([
-  html.p([], [element.text("Первый")]),
-  html.p([], [element.text("Второй")]),
-])
-
-// Пустой элемент (ничего не рендерится)
-element.none()
-
-// Преобразование типа сообщения
-element.map(child_element, fn(child_msg) { ParentMsg(child_msg) })
+pub fn filter_empty_test() { ... }
+pub fn filter_none_match_test() { ... }
+pub fn filter_all_match_test() { ... }
 ```
 
-`element.none()` полезен для условного рендеринга — возвращайте его там, где элемент не нужен, вместо обёртки в `Option`. `element.map` преобразует тип сообщения дочернего элемента, позволяя встраивать суб-компоненты с отличным типом `Msg`.
+Имена тестов должны описывать **что проверяется**:
 
-### lustre/element/html
+- `sort_empty_test` — сортировка пустого списка
+- `parse_negative_number_test` — парсинг отрицательного числа
+- `kv_delete_nonexistent_test` — удаление несуществующего ключа
 
-Модуль `lustre/element/html` содержит функции для всех стандартных HTML-элементов. Каждая функция принимает `List(Attribute(msg))` и `List(Element(msg))`:
+## Тестирование акторов
 
-```gleam
-import lustre/element/html
-
-html.div([attribute.class("container")], [
-  html.h1([], [element.text("Заголовок")]),
-  html.p([], [element.text("Параграф")]),
-  html.ul([], [
-    html.li([], [element.text("Пункт 1")]),
-    html.li([], [element.text("Пункт 2")]),
-  ]),
-])
-```
-
-Самозакрывающиеся (void) элементы не принимают дочерних узлов:
+Акторы из главы 8 тоже нужно тестировать. Подход прямолинейный: создаём актор, отправляем сообщения, проверяем ответы.
 
 ```gleam
-html.input([attribute.type_("text"), attribute.placeholder("Введите...")])
-html.br([])
-html.hr([])
-html.img([attribute.src("/logo.png"), attribute.alt("Логотип")])
-```
+import gleam/otp/actor
+import gleeunit/should
 
-Void-элементы не принимают дочерних узлов — в HTML они самозакрывающиеся. Попытка передать список дочерних элементов таким функциям приведёт к ошибке компиляции.
+pub fn counter_increment_test() {
+  let assert Ok(counter) = start_counter()
 
-## Атрибуты
+  actor.send(counter, Increment)
+  actor.send(counter, Increment)
+  actor.send(counter, Increment)
 
-Модуль `lustre/attribute` содержит функции для HTML-атрибутов:
-
-```gleam
-import lustre/attribute
-
-// Стандартные атрибуты
-attribute.id("my-id")
-attribute.class("btn btn-primary")
-attribute.classes([#("active", is_active), #("disabled", is_disabled)])
-attribute.style([#("color", "red"), #("font-size", "16px")])
-
-// Форма
-attribute.type_("text")        // type — зарезервировано, поэтому type_
-attribute.value("текст")
-attribute.placeholder("Введите...")
-attribute.checked(True)
-attribute.disabled(False)
-attribute.name("email")
-
-// Медиа и ссылки
-attribute.src("/image.png")
-attribute.href("/about")
-attribute.alt("Описание")
-
-// Произвольный атрибут
-attribute.attribute("data-id", "42")
-```
-
-`attribute.classes` принимает список пар `#(class, bool)` и применяет только те классы, у которых условие — `True`. `attribute.style` принимает список пар `#(property, value)` вместо строки — удобнее для динамических стилей.
-
-### Условные атрибуты
-
-```gleam
-fn button_view(is_loading: Bool) -> Element(Msg) {
-  html.button(
-    [
-      attribute.disabled(is_loading),
-      attribute.class(case is_loading {
-        True -> "btn btn--loading"
-        False -> "btn"
-      }),
-    ],
-    [element.text("Сохранить")],
-  )
+  actor.call(counter, waiting: 1000, sending: GetCount)
+  |> should.equal(3)
 }
 ```
 
-`attribute.disabled(is_loading)` и условный класс вычисляются при каждом рендере — если `is_loading` изменится, Lustre автоматически обновит только изменившиеся атрибуты в DOM.
+Тест запускает актора, отправляет три `Increment` через `actor.send` (пожар-и-забыл), затем через `actor.call` синхронно получает состояние. `call` гарантирует, что все предыдущие сообщения обработаны к моменту ответа.
 
-## События
+### Таймауты в тестах
 
-Модуль `lustre/event` позволяет подписываться на DOM-события:
+По умолчанию gleeunit даёт каждому тесту **5 секунд**. Для тестов с акторами этого обычно достаточно, но если тест включает `process.sleep` или ожидание сообщений, может не хватить.
 
-```gleam
-import lustre/event
+> **Совет:** в тестах используйте небольшие таймауты (`waiting: 100`) вместо `waiting: 1000`. Если актор не отвечает за 100 мс — скорее всего, есть баг, а не медленность.
 
-// Клик
-html.button([event.on_click(ButtonClicked)], [element.text("Нажми")])
+### Изоляция тестов
 
-// Ввод текста — получаем значение поля
-html.input([event.on_input(TextChanged)])
-
-// Отправка формы
-html.form([event.on_submit(FormSubmitted)], [...])
-
-// Чекбокс
-html.input([
-  attribute.type_("checkbox"),
-  event.on_check(CheckboxToggled),
-])
-```
-
-`event.on_input` автоматически извлекает `event.target.value` из DOM-события и передаёт строку в сообщение. `event.on_check` передаёт булево значение состояния чекбокса.
-
-### Произвольные события с декодером
+Каждый тест должен создавать **собственные** акторы. Не используйте общие акторы между тестами — порядок выполнения не гарантирован:
 
 ```gleam
-import gleam/dynamic/decode
+// ✓ Хорошо: каждый тест создаёт своего актора
+pub fn test_a() {
+  let assert Ok(actor) = start_counter()
+  // ...
+}
 
-// Считываем event.target.value из DOM-события
-fn on_input_change(to_msg: fn(String) -> Msg) -> attribute.Attribute(Msg) {
-  event.on("input", {
-    use value <- decode.subfield(["target", "value"], decode.string)
-    decode.success(to_msg(value))
-  })
+pub fn test_b() {
+  let assert Ok(actor) = start_counter()
+  // ...
 }
 ```
 
-`event.on` принимает имя DOM-события и декодер, который разбирает нативный JavaScript-объект события. Это позволяет извлекать любые поля — не только `target.value`, но и координаты мыши, код клавиши и другие данные события.
+Создавать акторов в каждом тесте — правильный подход: тесты независимы и могут запускаться в любом порядке. Общий актор между тестами приводит к недетерминированным провалам.
 
-### Debounce и throttle
+## Property-based testing с qcheck
 
-```gleam
-// Debounce: не отправлять сообщение чаще, чем раз в 300мс
-event.on_input(TextChanged) |> event.debounce(300)
+Unit-тесты проверяют конкретные примеры: `sort([3, 1, 2]) == [1, 2, 3]`. Но что если пропущен граничный случай?
 
-// Throttle: пропускать события не чаще раза в 100мс
-event.on_mouse_move(MouseMoved) |> event.throttle(100)
-```
+**Property-based testing** (PBT) — подход, при котором вы описываете **свойства** (законы), которым должна удовлетворять функция, а фреймворк генерирует **сотни случайных входных данных** и проверяет, что свойства выполняются.
 
-`debounce` задерживает отправку сообщения: если пользователь печатает быстро, сообщение отправится только через 300мс после последнего нажатия — удобно для поиска в реальном времени. `throttle` ограничивает частоту — полезно для обработки движения мыши или скролла.
+### Концепция
 
-## Работа со списками
+Вместо `sort([3, 1, 2]) == [1, 2, 3]` мы пишем:
+
+> «Для **любого** списка `xs`, после `sort(xs)` каждый элемент ≤ следующего»
+
+Фреймворк генерирует списки: `[]`, `[1]`, `[5, -3, 0, 99, -42]`, `[1, 1, 1]`, ... — и проверяет свойство на каждом.
+
+### qcheck — PBT для Gleam
 
 ```gleam
 import gleam/list
+import qcheck
 
-type Model {
-  Model(todos: List(String), input: String)
+pub fn sort_is_sorted_test() {
+  use xs <- qcheck.given(qcheck.list(qcheck.int()))
+  let sorted = list.sort(xs, int.compare)
+  is_sorted(sorted)
+  |> should.be_true
 }
 
-type Msg {
-  InputChanged(String)
-  AddTodo
-  RemoveTodo(Int)
-}
-
-fn view(model: Model) -> Element(Msg) {
-  html.div([], [
-    // Поле ввода
-    html.input([
-      attribute.value(model.input),
-      attribute.placeholder("Новая задача..."),
-      event.on_input(InputChanged),
-    ]),
-    html.button([event.on_click(AddTodo)], [element.text("Добавить")]),
-
-    // Список задач
-    html.ul(
-      [],
-      list.index_map(model.todos, fn(todo, i) {
-        html.li([], [
-          element.text(todo),
-          html.button(
-            [event.on_click(RemoveTodo(i))],
-            [element.text("✕")],
-          ),
-        ])
-      }),
-    ),
-  ])
-}
-```
-
-`list.index_map` передаёт в колбэк и элемент, и его индекс — это нужно, чтобы привязать к кнопке «✕» нужный номер задачи для `RemoveTodo(i)`. Атрибут `value` у `html.input` синхронизирует поле с моделью, делая ввод управляемым.
-
-## Эффекты
-
-Реальные приложения делают HTTP-запросы, работают с localStorage, таймерами. Для этого используются эффекты.
-
-### lustre.application — приложение с эффектами
-
-```gleam
-import lustre
-import lustre/effect.{type Effect}
-
-fn init(flags) -> #(Model, Effect(Msg)) {
-  #(
-    Model(todos: [], loading: True),
-    // Эффект запускается при инициализации
-    fetch_todos(),
-  )
-}
-
-fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
-  case msg {
-    LoadTodos -> #(model, fetch_todos())
-    TodosLoaded(todos) -> #(Model(..model, todos:, loading: False), effect.none())
-    AddTodo(text) -> #(
-      Model(..model, todos: [text, ..model.todos]),
-      effect.none(),
-    )
-  }
-}
-
-pub fn main() {
-  let app = lustre.application(init, update, view)
-  let assert Ok(_) = lustre.start(app, "#app", Nil)
-  Nil
-}
-```
-
-Отличие от `lustre.simple`: функции `init` и `update` возвращают `#(Model, Effect(Msg))` вместо просто `Model`.
-
-### lustre_http — HTTP-запросы
-
-```gleam
-import lustre/effect.{type Effect}
-import lustre_http
-
-type Msg {
-  GotTodos(Result(List(Todo), lustre_http.HttpError))
-}
-
-fn fetch_todos() -> Effect(Msg) {
-  lustre_http.get(
-    "https://api.example.com/todos",
-    lustre_http.expect_json(todos_decoder(), GotTodos),
-  )
-}
-```
-
-`lustre_http.expect_json` принимает декодер и конструктор сообщения. При успехе декодирует JSON и передаёт результат в `GotTodos(Ok(...))`, при сетевой ошибке или неверном JSON — в `GotTodos(Error(...))`.
-
-### Кастомные эффекты
-
-```gleam
-fn save_to_local_storage(key: String, value: String) -> Effect(Msg) {
-  effect.from(fn(dispatch) {
-    // Выполняется как побочный эффект
-    do_save_to_storage(key, value)
-    dispatch(SaveComplete)
-  })
-}
-```
-
-`effect.from` создаёт эффект из функции, которая получает `dispatch` — колбэк для отправки сообщений обратно в Lustre. Код внутри выполняется вне цикла обновления, что позволяет делать любые побочные действия: запись в localStorage, подписки на события, таймеры.
-
-### Группировка эффектов
-
-```gleam
-fn init(flags) -> #(Model, Effect(Msg)) {
-  #(
-    initial_model,
-    effect.batch([
-      fetch_todos(),
-      load_user_preferences(),
-    ]),
-  )
-}
-```
-
-`effect.batch` объединяет несколько эффектов в один — они запустятся параллельно при инициализации или обновлении. Это удобно, когда нужно сразу загрузить данные из нескольких источников.
-
-## Компоненты
-
-Lustre поддерживает переиспользуемые компоненты в виде Custom Elements Web Components.
-
-### Регистрация компонента
-
-```gleam
-import lustre
-import lustre/component
-import lustre/effect.{type Effect}
-import lustre/element.{type Element}
-import gleam/int
-
-type Model = Int
-
-type Msg {
-  Increment
-  Decrement
-}
-
-fn init(_) -> #(Model, Effect(Msg)) {
-  #(0, effect.none())
-}
-
-fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
-  case msg {
-    Increment -> #(model + 1, effect.none())
-    Decrement -> #(model - 1, effect.none())
-  }
-}
-
-fn view(model: Model) -> Element(Msg) {
-  html.div([], [
-    html.button([event.on_click(Decrement)], [element.text("-")]),
-    element.text(int.to_string(model)),
-    html.button([event.on_click(Increment)], [element.text("+")]),
-  ])
-}
-
-pub fn register() {
-  lustre.component("my-counter", init, update, view, component.empty())
-}
-```
-
-Использование в HTML:
-
-```html
-<my-counter></my-counter>
-```
-
-После вызова `register()` тег `<my-counter>` становится полноценным Custom Element — браузер автоматически монтирует в него Lustre-приложение при добавлении в DOM.
-
-## Server Components
-
-Lustre поддерживает серверные компоненты — UI-логика работает на BEAM-сервере, браузеру нужен лишь ~10kb клиентский рантайм.
-
-### Как работают Server Components
-
-```
-Браузер                          Сервер (BEAM)
-┌─────────────┐  WebSocket/SSE  ┌──────────────────┐
-│  ~10kb JS   │ ◄─── патчи ──── │  Lustre-процесс  │
-│  рантайм    │ ──── события ►  │  (OTP-актор)     │
-└─────────────┘                 └──────────────────┘
-```
-
-При каждом действии пользователя:
-1. Браузер отправляет событие по WebSocket на сервер
-2. Сервер запускает `update`, получает новый Model
-3. Сервер вычисляет diff виртуального DOM
-4. Браузер получает минимальный патч и применяет его
-
-Server Components идеальны для:
-- Дашбордов с real-time данными
-- Совместного редактирования
-- Чатов и уведомлений
-- Приложений, где важен SEO и минимальный JS
-
-## Проект: TODO-приложение
-
-Соберём полный TODO-список с фильтрацией.
-
-### Модель
-
-```gleam
-pub type Filter {
-  All
-  Active
-  Completed
-}
-
-pub type Todo {
-  Todo(id: Int, text: String, completed: Bool)
-}
-
-pub type Model {
-  Model(
-    todos: List(Todo),
-    input: String,
-    filter: Filter,
-    next_id: Int,
-  )
-}
-```
-
-`Filter` — алгебраический тип для переключения видимых задач. `Todo` хранит уникальный `id`, текст и признак выполнения. `next_id` в `Model` монотонно растёт и гарантирует, что каждая новая задача получит уникальный идентификатор.
-
-### Сообщения
-
-```gleam
-pub type Msg {
-  InputChanged(String)
-  AddTodo
-  ToggleTodo(Int)
-  DeleteTodo(Int)
-  SetFilter(Filter)
-  ClearCompleted
-}
-```
-
-Каждое возможное действие пользователя — отдельный конструктор: ввод текста, добавление, переключение чекбокса, удаление задачи, смена фильтра и очистка выполненных. Система типов не даст забыть ни один случай в `update`.
-
-### Update
-
-```gleam
-fn update(model: Model, msg: Msg) -> Model {
-  case msg {
-    InputChanged(text) -> Model(..model, input: text)
-
-    AddTodo ->
-      case string.trim(model.input) {
-        "" -> model
-        text -> {
-          let todo = Todo(id: model.next_id, text:, completed: False)
-          Model(
-            ..model,
-            todos: list.append(model.todos, [todo]),
-            input: "",
-            next_id: model.next_id + 1,
-          )
-        }
+fn is_sorted(xs: List(Int)) -> Bool {
+  case xs {
+    [] | [_] -> True
+    [a, b, ..rest] ->
+      case a <= b {
+        True -> is_sorted([b, ..rest])
+        False -> False
       }
-
-    ToggleTodo(id) -> {
-      let todos =
-        list.map(model.todos, fn(todo) {
-          case todo.id == id {
-            True -> Todo(..todo, completed: !todo.completed)
-            False -> todo
-          }
-        })
-      Model(..model, todos:)
-    }
-
-    DeleteTodo(id) -> {
-      let todos = list.filter(model.todos, fn(todo) { todo.id != id })
-      Model(..model, todos:)
-    }
-
-    SetFilter(filter) -> Model(..model, filter:)
-
-    ClearCompleted -> {
-      let todos = list.filter(model.todos, fn(todo) { !todo.completed })
-      Model(..model, todos:)
-    }
   }
 }
 ```
 
-`AddTodo` сначала проверяет, что поле не пустое (`string.trim`), и только потом создаёт задачу — защита от пустых строк. `ToggleTodo` проходит по всему списку с `list.map` и инвертирует только нужный элемент по `id`, не трогая остальные.
+`qcheck.given(generator)` запускает property-test:
 
-### View
+1. Генерирует случайные значения с помощью `generator`
+2. Передаёт каждое значение в функцию-свойство
+3. Если свойство нарушено — **сжимает** (shrinks) контрпример до минимального
+
+### Генераторы
+
+Генераторы — источники случайных данных:
 
 ```gleam
-fn filtered_todos(model: Model) -> List(Todo) {
-  case model.filter {
-    All -> model.todos
-    Active -> list.filter(model.todos, fn(t) { !t.completed })
-    Completed -> list.filter(model.todos, fn(t) { t.completed })
-  }
+// Примитивные генераторы
+qcheck.int()              // случайный Int
+qcheck.float()            // случайный Float
+qcheck.string()           // случайная String
+qcheck.bool()             // True или False
+
+// Коллекции
+qcheck.list(qcheck.int())           // List(Int)
+qcheck.list(qcheck.string())        // List(String)
+
+// Ограниченные диапазоны
+qcheck.int_uniform_inclusive(1, 100)  // Int от 1 до 100
+qcheck.small_positive_or_zero_int()   // маленькие неотрицательные
+
+// Константы и выбор
+qcheck.return(42)                    // всегда 42
+qcheck.from_list([1, 2, 3])         // случайный из списка
+```
+
+Генераторы компонуются: `qcheck.list(qcheck.int())` создаёт список из случайных целых. Каждый генератор умеет не только генерировать, но и сжимать (shrink) значения при нахождении контрпримера.
+
+### Shrinking — сжатие контрпримеров
+
+Когда свойство нарушено на входе `[99, -42, 73, 0, -15]`, qcheck не просто сообщает об ошибке — он **сжимает** контрпример, убирая лишние элементы и уменьшая числа, пока свойство всё ещё нарушено:
+
+```text
+Failing input: [99, -42, 73, 0, -15]
+After shrinking: [1, 0]
+```
+
+Это экономит время на отладку — вместо сложного случая вы видите минимальный.
+
+### Пользовательские генераторы
+
+Можно создавать генераторы для своих типов:
+
+```gleam
+import qcheck
+
+pub type Color {
+  Red
+  Green
+  Blue
 }
 
-fn view(model: Model) -> Element(Msg) {
-  let remaining =
-    model.todos
-    |> list.filter(fn(t) { !t.completed })
-    |> list.length
-
-  html.div([attribute.class("app")], [
-    html.h1([], [element.text("TODO")]),
-
-    html.div([attribute.class("input-row")], [
-      html.input([
-        attribute.value(model.input),
-        attribute.placeholder("Что нужно сделать?"),
-        event.on_input(InputChanged),
-      ]),
-      html.button([event.on_click(AddTodo)], [element.text("Добавить")]),
-    ]),
-
-    html.ul(
-      [attribute.class("todo-list")],
-      model |> filtered_todos |> list.map(todo_view),
-    ),
-
-    html.div([attribute.class("footer")], [
-      element.text(int.to_string(remaining) <> " осталось"),
-      filter_buttons(model.filter),
-    ]),
-  ])
+fn color_generator() -> qcheck.Generator(Color) {
+  qcheck.from_list([Red, Green, Blue])
 }
 
-fn todo_view(todo: Todo) -> Element(Msg) {
-  html.li([], [
-    html.input([
-      attribute.type_("checkbox"),
-      attribute.checked(todo.completed),
-      event.on_check(fn(_) { ToggleTodo(todo.id) }),
-    ]),
-    html.span([], [element.text(todo.text)]),
-    html.button(
-      [event.on_click(DeleteTodo(todo.id))],
-      [element.text("✕")],
-    ),
-  ])
+pub type Point {
+  Point(x: Int, y: Int)
+}
+
+fn point_generator() -> qcheck.Generator(Point) {
+  use x <- qcheck.parameter(qcheck.int())
+  use y <- qcheck.parameter(qcheck.int())
+  qcheck.return(Point(x:, y:))
 }
 ```
 
-`filtered_todos` вычисляется заново при каждом вызове `view` — это нормально в функциональном UI, где вся функция рендера чистая. `todo_view` вынесена отдельно, чтобы `view` оставалась читаемой и компактной.
+`qcheck.parameter` позволяет комбинировать примитивные генераторы в генератор составного типа. Синтаксис `use x <- qcheck.parameter(gen)` последовательно «разворачивает» значения из генераторов, аналогично `use` для `Result`.
+
+### Какие свойства тестировать?
+
+Вот классические свойства, применимые к разным функциям:
+
+**Инволюция** — применение дважды возвращает оригинал:
+
+```gleam
+pub fn reverse_involution_test() {
+  use xs <- qcheck.given(qcheck.list(qcheck.int()))
+  list.reverse(list.reverse(xs)) == xs
+  |> should.be_true
+}
+```
+
+**Идемпотентность** — повторное применение не меняет результат:
+
+```gleam
+pub fn sort_idempotent_test() {
+  use xs <- qcheck.given(qcheck.list(qcheck.int()))
+  let sorted = list.sort(xs, int.compare)
+  list.sort(sorted, int.compare) == sorted
+  |> should.be_true
+}
+```
+
+**Сохранение инварианта** — свойство выполняется для любого входа:
+
+```gleam
+pub fn sort_preserves_length_test() {
+  use xs <- qcheck.given(qcheck.list(qcheck.int()))
+  list.length(list.sort(xs, int.compare)) == list.length(xs)
+  |> should.be_true
+}
+```
+
+**Roundtrip** — encode → decode = оригинал:
+
+```gleam
+pub fn json_roundtrip_test() {
+  use xs <- qcheck.given(qcheck.list(qcheck.int()))
+  xs
+  |> encode_ints
+  |> decode_ints
+  |> should.equal(Ok(xs))
+}
+```
+
+**Постусловие** — результат удовлетворяет определённому свойству:
+
+```gleam
+pub fn abs_non_negative_test() {
+  use n <- qcheck.given(qcheck.int())
+  int.absolute_value(n) >= 0
+  |> should.be_true
+}
+```
+
+Каждый из этих паттернов проверяет фундаментальные математические свойства, а не конкретные примеры. Если функция нарушает инволюцию или идемпотентность — это указывает на серьёзный баг в логике, а не просто неверный частный случай.
+
+## Snapshot-тестирование с birdie
+
+**Snapshot-тесты** сохраняют «снимок» вывода функции и сравнивают с ним при последующих запусках. Это удобно для:
+
+- Форматированного вывода (таблицы, отчёты)
+- Сериализации (JSON, HTML)
+- Диагностических сообщений
+
+### Как работает birdie
+
+```gleam
+import birdie
+
+pub fn format_table_test() {
+  format_table(["Name", "Age"], [["Alice", "30"], ["Bob", "25"]])
+  |> birdie.snap("format simple table")
+}
+```
+
+При первом запуске `gleam test`:
+
+1. birdie создаёт файл `birdie_snapshots/format_simple_table.accepted` с выводом функции
+2. Тест проходит
+
+При последующих запусках:
+
+1. birdie сравнивает текущий вывод с сохранённым
+2. Если совпадает — тест проходит
+3. Если отличается — тест падает, показывая diff
+
+### Управление снимками
+
+```sh
+# Запуск тестов (birdie создаёт .new файлы для новых/изменённых снимков)
+$ gleam test
+
+# Интерактивный ревью: принять, отклонить или пропустить каждый снимок
+$ gleam run -m birdie
+```
+
+birdie показывает diff для каждого изменённого снимка и предлагает:
+
+- **Accept** — принять новый снимок
+- **Reject** — оставить старый
+- **Skip** — решить позже
+
+### Когда использовать snapshot-тесты
+
+- **Форматированный вывод**: таблицы, отчёты, pretty-print
+- **Сериализация**: JSON, TOML, XML
+- **Сложные структуры**: где `should.equal` требует громоздкий ожидаемый результат
+- **Регрессии формата**: заметить, если вывод изменился неожиданно
+
+Snapshot-тесты **не** заменяют unit-тесты и PBT — они дополняют их. Используйте unit-тесты для логики, PBT для свойств, snapshots для форматирования.
+
+## Проект: тестирование библиотеки коллекций
+
+Объединим все подходы для тестирования функций из предыдущих глав.
+
+### Unit-тесты
+
+```gleam
+import gleam/list
+import gleam/int
+import gleeunit/should
+
+pub fn sort_empty_test() {
+  list.sort([], int.compare)
+  |> should.equal([])
+}
+
+pub fn sort_single_test() {
+  list.sort([42], int.compare)
+  |> should.equal([42])
+}
+
+pub fn sort_already_sorted_test() {
+  list.sort([1, 2, 3, 4, 5], int.compare)
+  |> should.equal([1, 2, 3, 4, 5])
+}
+
+pub fn sort_reverse_test() {
+  list.sort([5, 4, 3, 2, 1], int.compare)
+  |> should.equal([1, 2, 3, 4, 5])
+}
+
+pub fn sort_duplicates_test() {
+  list.sort([3, 1, 3, 1, 2], int.compare)
+  |> should.equal([1, 1, 2, 3, 3])
+}
+```
+
+Пять тестов покрывают ключевые граничные случаи: пустой список, один элемент, уже отсортированный, обратный порядок, дубликаты. Для конкретных значений unit-тесты читаются как документация.
+
+### Property-based тесты
+
+```gleam
+import qcheck
+
+pub fn sort_output_is_sorted_test() {
+  use xs <- qcheck.given(qcheck.list(qcheck.int()))
+  let sorted = list.sort(xs, int.compare)
+  is_sorted(sorted)
+  |> should.be_true
+}
+
+pub fn sort_preserves_elements_test() {
+  use xs <- qcheck.given(qcheck.list(qcheck.int()))
+  let sorted = list.sort(xs, int.compare)
+  list.sort(xs, int.compare) == list.sort(sorted, int.compare)
+  |> should.be_true
+}
+```
+
+PBT-тесты дополняют unit-тесты: там где unit проверяет «правильный ли ответ для [3,1,2]», PBT проверяет «остаётся ли отсортированный результат стабильным при повторной сортировке» для любого возможного входа.
+
+### Snapshot-тесты
+
+```gleam
+import birdie
+
+pub fn format_table_snapshot_test() {
+  format_table(
+    ["ID", "Name", "Score"],
+    [["1", "Alice", "95"], ["2", "Bob", "87"], ["3", "Charlie", "92"]],
+  )
+  |> birdie.snap("score table")
+}
+```
+
+Снимок фиксирует форматирование таблицы — любое изменение в пробелах, разделителях или выравнивании будет замечено. `birdie.snap` принимает уникальное имя снимка, которое становится именем файла.
+
+## Тестирование JSON roundtrip
+
+Roundtrip-тесты — один из самых мощных паттернов для PBT. Идея: если мы кодируем значение в JSON и тут же декодируем обратно, должны получить оригинал.
+
+```gleam
+import gleam/dynamic/decode
+import gleam/json
+
+// Кодирование списка Int в JSON
+pub fn encode_ints(xs: List(Int)) -> String {
+  xs
+  |> json.array(json.int)
+  |> json.to_string
+}
+
+// Декодирование JSON в список Int
+pub fn decode_ints(s: String) -> Result(List(Int), Nil) {
+  json.parse(s, decode.list(decode.int))
+  |> result.map_error(fn(_) { Nil })
+}
+
+// Property: roundtrip
+pub fn json_roundtrip_test() {
+  use xs <- qcheck.given(qcheck.list(qcheck.int()))
+  xs
+  |> encode_ints
+  |> decode_ints
+  |> should.equal(Ok(xs))
+}
+```
+
+Этот тест генерирует сотни случайных списков и проверяет, что encode → decode = оригинал. Если есть баг в кодировщике или декодировщике — qcheck его найдёт.
+
+## CI: тестирование в GitHub Actions
+
+Настройка CI для Gleam-проекта:
+
+```yaml
+# .github/workflows/test.yml
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27.0"
+          gleam-version: "1.6.0"
+      - run: gleam test
+      - run: gleam format --check src/ test/
+```
+
+Ключевые шаги:
+
+1. **setup-beam** — устанавливает Erlang/OTP и Gleam
+2. **gleam test** — запускает все тесты
+3. **gleam format --check** — проверяет форматирование (без изменения файлов)
 
 ## Упражнения
 
-Код упражнений находится в `exercises/chapter11/`.
+В этой главе упражнения необычные: вы будете реализовывать функции **и** видеть, как они тестируются разными подходами (unit, PBT, snapshot).
 
-Тесты запускаются на JavaScript-таргете:
+Решения пишите в файле `exercises/chapter09/test/my_solutions.gleam`. Запускайте тесты:
 
-```bash
-cd exercises/chapter11
+```sh
+cd exercises/chapter09
 gleam test
 ```
 
----
+Запускайте тесты после каждого упражнения — они проверяют как юнит-тесты, так и property-based тесты для ваших реализаций.
 
-**Упражнение 11.1** (Лёгкое): Рендеринг списка
+### 1. is_sorted — проверка сортировки (Лёгкое)
 
-```gleam
-pub fn render_list(items: List(String)) -> Element(msg) {
-  todo
-}
-```
-
-Функция должна вернуть элемент `<ul>` с `<li>` для каждой строки из `items`.
-
-*Подсказка*: `html.ul`, `html.li`, `list.map`.
-
----
-
-**Упражнение 11.2** (Лёгкое): Инициализация счётчика
+Реализуйте функцию, проверяющую, отсортирован ли список по возрастанию.
 
 ```gleam
-pub fn counter_init() -> Int {
-  todo
-}
+pub fn is_sorted(xs: List(Int)) -> Bool
 ```
 
-Возвращает начальное значение счётчика: `0`.
+**Примеры:**
 
----
+```text
+is_sorted([]) == True
+is_sorted([1]) == True
+is_sorted([1, 2, 3, 4, 5]) == True
+is_sorted([1, 3, 2]) == False
+is_sorted([5, 4, 3]) == False
+```
 
-**Упражнение 11.3** (Лёгкое): Обновление счётчика
+**Подсказка:** рекурсия с pattern matching на `[a, b, ..rest]`. Базовые случаи: `[]` и `[_]` → True.
+
+### 2. encode_ints / decode_ints — JSON roundtrip (Среднее)
+
+Реализуйте кодирование и декодирование списка целых чисел в/из JSON.
 
 ```gleam
-pub type CounterMsg {
-  CounterIncrement
-  CounterDecrement
-  CounterReset
-}
-
-pub fn counter_update(model: Int, msg: CounterMsg) -> Int {
-  todo
-}
+pub fn encode_ints(xs: List(Int)) -> String
+pub fn decode_ints(s: String) -> Result(List(Int), Nil)
 ```
 
-`CounterIncrement` увеличивает на 1, `CounterDecrement` уменьшает на 1, `CounterReset` сбрасывает в 0.
+**Примеры:**
 
----
+```text
+encode_ints([1, 2, 3]) == "[1,2,3]"
+decode_ints("[1,2,3]") == Ok([1, 2, 3])
+decode_ints("not json") == Error(Nil)
+```
 
-**Упражнение 11.4** (Среднее, самостоятельное): Форма с валидацией
+Тест проверит roundtrip: `encode_ints(xs) |> decode_ints == Ok(xs)`.
 
-Реализуйте компонент формы:
-- Поле для ввода email
-- При отправке: если email содержит `@` — показать "OK", иначе — "Неверный email"
-- Используйте `lustre.simple`
+**Подсказка:** `json.array(xs, json.int) |> json.to_string` для кодирования. `json.parse(s, decode.list(decode.int))` для декодирования.
 
----
+### 3. my_sort — сортировка с PBT (Среднее)
 
-**Упражнение 11.5** (Сложное, самостоятельное): TODO с фильтрами
+Реализуйте сортировку списка целых чисел (любым алгоритмом).
 
-Реализуйте полноценный TODO-список с:
-- Добавлением/удалением задач
-- Отметкой выполнения (чекбокс)
-- Тремя фильтрами: Все / Активные / Завершённые
+```gleam
+pub fn my_sort(xs: List(Int)) -> List(Int)
+```
 
-## Итоги
+Тесты проверят несколько свойств вашей сортировки через qcheck:
 
-Lustre предлагает строго типизированный UI с:
-- **TEA** — однонаправленный поток данных, нет мутаций
-- **Виртуальный DOM** — эффективные обновления браузера
-- **Эффекты** — чистое управление побочными эффектами
-- **Server Components** — компоненты на BEAM с WebSocket
+- Результат отсортирован (каждый элемент ≤ следующего)
+- Длина сохраняется
+- Идемпотентность (повторная сортировка не меняет результат)
+- Сохранение элементов (те же элементы, что и на входе)
 
-Gleam позволяет использовать один язык и для бэкенда (Wisp, OTP), и для фронтенда (Lustre) — уникальная возможность в мире типизированных языков.
+**Подсказка:** можно использовать `list.sort(xs, int.compare)` или написать свою реализацию (insertion sort, merge sort).
 
-## Ресурсы
+### 4. int_in_range — генератор чисел в диапазоне (Среднее)
 
-- [HexDocs — lustre](https://hexdocs.pm/lustre/)
-- [Lustre Quickstart](https://hexdocs.pm/lustre/guide/01-quickstart.html)
-- [Lustre — GitHub](https://github.com/lustre-labs/lustre)
-- [Building your first Gleam web app with Wisp and Lustre](https://gleaming.dev/articles/building-your-first-gleam-web-app/)
+Реализуйте функцию-генератор, которая создаёт целые числа в заданном диапазоне `[lo, hi]`.
+
+```gleam
+pub fn int_in_range(lo: Int, hi: Int) -> qcheck.Generator(Int)
+```
+
+Тесты проверят свойства генератора:
+
+- Все сгенерированные числа ≥ lo
+- Все сгенерированные числа ≤ hi
+
+**Подсказка:** используйте `qcheck.int_uniform_inclusive(lo, hi)`.
+
+### 5. clamp — ограничение значения с PBT (Сложное)
+
+Реализуйте функцию, ограничивающую значение диапазоном `[lo, hi]`.
+
+```gleam
+pub fn clamp(value: Int, lo: Int, hi: Int) -> Int
+```
+
+**Примеры:**
+
+```text
+clamp(5, 1, 10) == 5     // в диапазоне — не меняется
+clamp(-3, 0, 100) == 0   // меньше lo — возвращает lo
+clamp(999, 0, 100) == 100 // больше hi — возвращает hi
+```
+
+Тесты проверят через qcheck:
+
+- Результат всегда ≥ lo
+- Результат всегда ≤ hi
+- Если value в диапазоне — возвращается без изменений
+- Идемпотентность: `clamp(clamp(x, lo, hi), lo, hi) == clamp(x, lo, hi)`
+
+**Подсказка:** `int.min(hi, int.max(lo, value))` или case-выражение с guards.
+
+## Заключение
+
+В этой главе мы изучили:
+
+- **gleeunit** — стандартный тестовый раннер с утверждениями `should.*`
+- **Организация тестов** — именование, группировка, изоляция
+- **Тестирование акторов** — создание, отправка сообщений, таймауты
+- **Property-based testing** с qcheck — генераторы, свойства, shrinking
+- **Snapshot-тестирование** с birdie — снимки вывода, интерактивный ревью
+- **JSON roundtrip** — мощный паттерн для PBT
+- **CI** — GitHub Actions для автоматического тестирования
+
+В следующей главе мы создадим полноценное веб-приложение с Wisp — HTTP-фреймворком для Gleam.

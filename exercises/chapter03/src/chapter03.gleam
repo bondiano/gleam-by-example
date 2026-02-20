@@ -25,11 +25,9 @@ pub fn parse_and_double(input: String) -> Result(Int, Nil) {
       }
     },
   )
-  use parsed <- result.try(
-    case n {
-      _ -> Error(Nil)
-    },
-  )
+  use parsed <- result.try(case n {
+    _ -> Error(Nil)
+  })
   Ok(parsed * 2)
 }
 

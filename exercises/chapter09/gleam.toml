@@ -1,12 +1,11 @@
 name = "chapter09"
 version = "1.0.0"
-target = "erlang"
+target = "javascript"
 
 [dependencies]
 gleam_stdlib = ">= 0.44.0 and < 2.0.0"
+gleam_javascript = ">= 0.11.0 and < 2.0.0"
 gleam_json = ">= 2.0.0 and < 4.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"
-qcheck = ">= 1.0.0 and < 2.0.0"
-birdie = ">= 1.0.0 and < 2.0.0"
