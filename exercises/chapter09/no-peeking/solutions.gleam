@@ -1,62 +1,85 @@
 //// Референсные решения — не подсматривайте, пока не попробуете сами!
+//// Тема: JavaScript FFI — интеграция с браузерными API и JavaScript-функциями.
 
-import gleam/dynamic/decode
-import gleam/int
-import gleam/json
-import gleam/list
-import gleam/result
-import qcheck
+import gleam/dynamic.{type Dynamic}
+import gleam/javascript/promise.{type Promise}
 
 // ============================================================
-// Упражнение 1: is_sorted
+// Упражнение 1: current_timestamp — Date.now()
 // ============================================================
 
-pub fn is_sorted(xs: List(Int)) -> Bool {
-  case xs {
-    [] | [_] -> True
-    [a, b, ..rest] ->
-      case a <= b {
-        True -> is_sorted([b, ..rest])
-        False -> False
-      }
-  }
-}
+@external(javascript, "./solutions_ffi.mjs", "getCurrentTimestamp")
+pub fn current_timestamp() -> Int
 
 // ============================================================
-// Упражнение 2: encode_ints / decode_ints
+// Упражнение 2: local_storage — get/set/remove
 // ============================================================
 
-pub fn encode_ints(xs: List(Int)) -> String {
-  xs
-  |> json.array(json.int)
-  |> json.to_string
-}
+@external(javascript, "./solutions_ffi.mjs", "storageGet")
+pub fn storage_get(key: String) -> Result(String, Nil)
 
-pub fn decode_ints(s: String) -> Result(List(Int), Nil) {
-  json.parse(s, decode.list(decode.int))
-  |> result.map_error(fn(_) { Nil })
-}
+@external(javascript, "./solutions_ffi.mjs", "storageSet")
+pub fn storage_set(key: String, value: String) -> Result(Nil, String)
+
+@external(javascript, "./solutions_ffi.mjs", "storageRemove")
+pub fn storage_remove(key: String) -> Nil
 
 // ============================================================
-// Упражнение 3: my_sort
+// Упражнение 3: console_log_levels — разные уровни логов
 // ============================================================
 
-pub fn my_sort(xs: List(Int)) -> List(Int) {
-  list.sort(xs, int.compare)
-}
+@external(javascript, "./solutions_ffi.mjs", "consoleLog")
+pub fn console_log(message: String) -> Nil
+
+@external(javascript, "./solutions_ffi.mjs", "consoleWarn")
+pub fn console_warn(message: String) -> Nil
+
+@external(javascript, "./solutions_ffi.mjs", "consoleError")
+pub fn console_error(message: String) -> Nil
 
 // ============================================================
-// Упражнение 4: int_in_range
+// Упражнение 4: timeout — setTimeout wrapper
 // ============================================================
 
-pub fn int_in_range(lo: Int, hi: Int) -> qcheck.Generator(Int) {
-  qcheck.int_uniform_inclusive(lo, hi)
-}
+pub type TimeoutId
+
+@external(javascript, "./solutions_ffi.mjs", "setTimeoutWrapper")
+pub fn set_timeout(callback: fn() -> Nil, delay: Int) -> TimeoutId
+
+@external(javascript, "./solutions_ffi.mjs", "clearTimeoutWrapper")
+pub fn clear_timeout(id: TimeoutId) -> Nil
 
 // ============================================================
-// Упражнение 5: clamp
+// Упражнение 5: fetch_json — HTTP запрос с парсингом
 // ============================================================
 
-pub fn clamp(value: Int, lo: Int, hi: Int) -> Int {
-  int.min(hi, int.max(lo, value))
-}
+@external(javascript, "./solutions_ffi.mjs", "fetchJson")
+pub fn fetch_json(url: String) -> Promise(Result(String, String))
+
+// ============================================================
+// Упражнение 6: query_selector — типобезопасный поиск элементов
+// ============================================================
+
+pub type Element
+
+@external(javascript, "./solutions_ffi.mjs", "querySelectorWrapper")
+pub fn query_selector(selector: String) -> Result(Element, Nil)
+
+@external(javascript, "./solutions_ffi.mjs", "querySelectorAllWrapper")
+pub fn query_selector_all(selector: String) -> List(Element)
+
+// ============================================================
+// Упражнение 7: json_parse_safe — безопасный JSON.parse
+// ============================================================
+
+@external(javascript, "./solutions_ffi.mjs", "jsonParseSafe")
+pub fn json_parse_safe(json_str: String) -> Result(Dynamic, String)
+
+// ============================================================
+// Упражнение 8: event_target_value — получение значения из event.target
+// ============================================================
+
+pub type Event
+
+@external(javascript, "./solutions_ffi.mjs", "eventTargetValue")
+pub fn event_target_value(event: Event) -> Result(String, Nil)

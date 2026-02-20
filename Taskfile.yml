@@ -113,3 +113,9 @@ tasks:
     desc: Reset all student solution templates (clears my_solutions.gleam)
     cmds:
       - ./scripts/prepare-exercises.sh
+
+  check:exercises:
+    desc: Format and build all exercises
+    cmds:
+      - task: fmt
+      - task: build:exercises

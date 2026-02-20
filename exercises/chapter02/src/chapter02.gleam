@@ -1,5 +1,5 @@
-import gleam/int
 import gleam/float
+import gleam/int
 import gleam/io
 
 /// Пример: вывод в консоль

@@ -110,9 +110,7 @@ pub type SearchResults {
 }
 
 /// Декодирует JSON результатов поиска PokeAPI.
-pub fn decode_search_results(
-  json_str: String,
-) -> Result(SearchResults, Nil) {
+pub fn decode_search_results(json_str: String) -> Result(SearchResults, Nil) {
   todo
 }
 
@@ -193,8 +191,6 @@ pub type PokedexError {
 
 /// Строит запись PokeDex из JSON-строки.
 /// Цепочка: parse JSON → validate ID (1–1025) → validate types → validate abilities → format card.
-pub fn build_pokedex_entry(
-  json_str: String,
-) -> Result(String, PokedexError) {
+pub fn build_pokedex_entry(json_str: String) -> Result(String, PokedexError) {
   todo
 }

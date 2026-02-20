@@ -1,714 +1,525 @@
-# Тестирование
+# JavaScript FFI и фронтенд интеграция
 
-> «Testing can be fun, actually» — Джакомо Кавальери, автор birdie
+> «Any application that can be written in JavaScript, will eventually be written in JavaScript.» — Jeff Atwood
+
+<!-- toc -->
 
 ## Цели главы
 
 В этой главе мы:
 
-- Освоим gleeunit — стандартный тестовый фреймворк Gleam
-- Научимся писать выразительные утверждения с `should`
-- Изучим property-based testing (PBT) с qcheck
-- Познакомимся с генераторами и shrinking
-- Попробуем snapshot-тестирование с birdie
-- Разберём паттерны организации тестов
-- Научимся тестировать акторы и асинхронный код
-- Настроим CI с GitHub Actions
+- Научимся вызывать JavaScript функции через `@external`
+- Изучим двойной FFI (Erlang + JavaScript)
+- Познакомимся с `gleam_javascript` и работой с промисами
+- Поймём различия между JS concurrency и BEAM processes
+- Создадим обёртки для DOM API и браузерных функций
+- Построим типобезопасный интерфейс для работы с JavaScript-библиотеками
 
-## Зачем тестировать?
+## External functions для JavaScript
 
-Gleam — строго типизированный язык, и компилятор ловит многие ошибки. Но типы не могут проверить всё:
-
-- Правильность бизнес-логики (`sort` возвращает отсортированный список, а не просто `List(Int)`)
-- Граничные случаи (пустой список, отрицательные числа, unicode)
-- Взаимодействие компонентов (JSON encode → decode = оригинал?)
-- Регрессии (исправили баг — не сломали другое)
-
-Тесты дополняют типы: типы гарантируют **структурную** корректность, тесты — **семантическую**.
-
-## gleeunit — стандартный фреймворк
-
-`gleeunit` — стандартный тестовый раннер для Gleam. Он минималистичен: запускает все публичные функции с суффиксом `_test` в модулях из директории `test/`.
-
-### Структура теста
+Для JS-таргета FFI-функции определяются в отдельном `.mjs` файле:
 
 ```gleam
-// test/my_module_test.gleam
-import gleeunit
-import gleeunit/should
-import my_module
+// В src/my_module.gleam
+@external(javascript, "./my_ffi.mjs", "getCurrentTime")
+pub fn current_time() -> Int
+```
 
-pub fn main() -> Nil {
-  gleeunit.main()
-}
-
-pub fn add_test() {
-  my_module.add(1, 2)
-  |> should.equal(3)
-}
-
-pub fn add_zero_test() {
-  my_module.add(0, 0)
-  |> should.equal(0)
+```javascript
+// В src/my_ffi.mjs
+export function getCurrentTime() {
+  return Date.now();
 }
 ```
 
-Правила:
+Для JavaScript-таргета FFI-функция объявляется в Gleam с атрибутом `@external(javascript, ...)`, а её реализация помещается в отдельный `.mjs`-файл, который экспортирует соответствующую функцию.
 
-- Файл в директории `test/`
-- Функция `main` вызывает `gleeunit.main()`
-- Каждый тест — публичная функция с суффиксом `_test`
-- Тесты не принимают аргументов и возвращают `Nil`
+### Соглашения о путях
 
-### Запуск тестов
-
-```sh
-$ gleam test
-  Compiling chapter09
-   Compiled in 0.15s
-    Running chapter09_test.main
-.....
-5 tests passed
-```
-
-gleeunit выводит точку за каждый прошедший тест и итоговое число. При провале — подробный вывод с ожидаемым и полученным значением.
-
-### Утверждения (assertions)
-
-Модуль `gleeunit/should` предоставляет набор утверждений:
+Путь к `.mjs` файлу указывается относительно `.gleam` файла:
 
 ```gleam
-import gleeunit/should
+// В src/api/client.gleam
+@external(javascript, "./client_ffi.mjs", "fetch")
+// Ищет src/api/client_ffi.mjs
 
-// Равенство
-1 + 1 |> should.equal(2)
-"hello" |> should.not_equal("world")
-
-// Result
-Ok(42) |> should.be_ok
-Error("oops") |> should.be_error
-
-// Bool
-True |> should.be_true
-False |> should.be_false
-
-// Безусловный провал
-should.fail()
+@external(javascript, "../utils_ffi.mjs", "log")
+// Ищет src/utils_ffi.mjs
 ```
 
-Все функции `should.*` при неуспехе **паникуют** — тест считается проваленным, и gleeunit сообщает, какое значение ожидалось и какое получено.
+Путь к FFI-файлу всегда относительный: `./` означает ту же директорию, что и `.gleam`-файл, `../` — на уровень выше. Компилятор автоматически находит соответствующий `.mjs`-файл рядом с вашим модулем.
 
-### Пример: тестирование чистых функций
+### Конвертация типов между Gleam и JavaScript
 
-```gleam
-import gleam/string
-import gleeunit/should
+| Gleam Type | JavaScript Type |
+| ----------- | ---------------- |
+| `Int` | `number` |
+| `Float` | `number` |
+| `String` | `string` |
+| `Bool` | `boolean` |
+| `List(a)` | `Array` (immutable) |
+| `Result(a, b)` | `{type: "Ok", 0: value}` или `{type: "Error", 0: error}` |
+| `Option(a)` | `{type: "Some", 0: value}` или `{type: "None"}` |
+| `#(a, b)` | `[a, b]` (array) |
+| Custom type | Object с полем `type` |
 
-pub fn capitalize_test() {
-  string.capitalise("hello")
-  |> should.equal("Hello")
+### Пример: работа с localStorage
+
+```javascript
+// src/storage_ffi.mjs
+export function getItem(key) {
+  const value = localStorage.getItem(key);
+  if (value === null) {
+    return { type: "Error", 0: undefined };
+  }
+  return { type: "Ok", 0: value };
 }
 
-pub fn capitalize_empty_test() {
-  string.capitalise("")
-  |> should.equal("")
-}
-
-pub fn capitalize_already_test() {
-  string.capitalise("Hello")
-  |> should.equal("Hello")
-}
-```
-
-Три теста покрывают обычный случай, граничный (пустая строка) и идемпотентный (уже с заглавной буквы). Каждый тест — маленькая история: «при таком входе — ожидаю такой выход».
-
-### Пример: тестирование Result
-
-```gleam
-import gleam/int
-import gleeunit/should
-
-pub fn parse_valid_test() {
-  int.parse("42")
-  |> should.be_ok
-  |> should.equal(42)
-}
-
-pub fn parse_invalid_test() {
-  int.parse("not a number")
-  |> should.be_error
-}
-```
-
-Обратите внимание на цепочку: `should.be_ok` возвращает значение внутри `Ok`, поэтому можно продолжить `|> should.equal(42)`.
-
-### Организация тестов
-
-Хорошие практики организации:
-
-```gleam
-// Группируйте тесты по функции с комментариями-разделителями
-// ============================================================
-// Тесты для sort
-// ============================================================
-
-pub fn sort_empty_test() { ... }
-pub fn sort_single_test() { ... }
-pub fn sort_already_sorted_test() { ... }
-pub fn sort_reverse_test() { ... }
-
-// ============================================================
-// Тесты для filter
-// ============================================================
-
-pub fn filter_empty_test() { ... }
-pub fn filter_none_match_test() { ... }
-pub fn filter_all_match_test() { ... }
-```
-
-Имена тестов должны описывать **что проверяется**:
-
-- `sort_empty_test` — сортировка пустого списка
-- `parse_negative_number_test` — парсинг отрицательного числа
-- `kv_delete_nonexistent_test` — удаление несуществующего ключа
-
-## Тестирование акторов
-
-Акторы из главы 8 тоже нужно тестировать. Подход прямолинейный: создаём актор, отправляем сообщения, проверяем ответы.
-
-```gleam
-import gleam/otp/actor
-import gleeunit/should
-
-pub fn counter_increment_test() {
-  let assert Ok(counter) = start_counter()
-
-  actor.send(counter, Increment)
-  actor.send(counter, Increment)
-  actor.send(counter, Increment)
-
-  actor.call(counter, waiting: 1000, sending: GetCount)
-  |> should.equal(3)
-}
-```
-
-Тест запускает актора, отправляет три `Increment` через `actor.send` (пожар-и-забыл), затем через `actor.call` синхронно получает состояние. `call` гарантирует, что все предыдущие сообщения обработаны к моменту ответа.
-
-### Таймауты в тестах
-
-По умолчанию gleeunit даёт каждому тесту **5 секунд**. Для тестов с акторами этого обычно достаточно, но если тест включает `process.sleep` или ожидание сообщений, может не хватить.
-
-> **Совет:** в тестах используйте небольшие таймауты (`waiting: 100`) вместо `waiting: 1000`. Если актор не отвечает за 100 мс — скорее всего, есть баг, а не медленность.
-
-### Изоляция тестов
-
-Каждый тест должен создавать **собственные** акторы. Не используйте общие акторы между тестами — порядок выполнения не гарантирован:
-
-```gleam
-// ✓ Хорошо: каждый тест создаёт своего актора
-pub fn test_a() {
-  let assert Ok(actor) = start_counter()
-  // ...
-}
-
-pub fn test_b() {
-  let assert Ok(actor) = start_counter()
-  // ...
-}
-```
-
-Создавать акторов в каждом тесте — правильный подход: тесты независимы и могут запускаться в любом порядке. Общий актор между тестами приводит к недетерминированным провалам.
-
-## Property-based testing с qcheck
-
-Unit-тесты проверяют конкретные примеры: `sort([3, 1, 2]) == [1, 2, 3]`. Но что если пропущен граничный случай?
-
-**Property-based testing** (PBT) — подход, при котором вы описываете **свойства** (законы), которым должна удовлетворять функция, а фреймворк генерирует **сотни случайных входных данных** и проверяет, что свойства выполняются.
-
-### Концепция
-
-Вместо `sort([3, 1, 2]) == [1, 2, 3]` мы пишем:
-
-> «Для **любого** списка `xs`, после `sort(xs)` каждый элемент ≤ следующего»
-
-Фреймворк генерирует списки: `[]`, `[1]`, `[5, -3, 0, 99, -42]`, `[1, 1, 1]`, ... — и проверяет свойство на каждом.
-
-### qcheck — PBT для Gleam
-
-```gleam
-import gleam/list
-import qcheck
-
-pub fn sort_is_sorted_test() {
-  use xs <- qcheck.given(qcheck.list(qcheck.int()))
-  let sorted = list.sort(xs, int.compare)
-  is_sorted(sorted)
-  |> should.be_true
-}
-
-fn is_sorted(xs: List(Int)) -> Bool {
-  case xs {
-    [] | [_] -> True
-    [a, b, ..rest] ->
-      case a <= b {
-        True -> is_sorted([b, ..rest])
-        False -> False
-      }
+export function setItem(key, value) {
+  try {
+    localStorage.setItem(key, value);
+    return { type: "Ok", 0: undefined };
+  } catch (e) {
+    return { type: "Error", 0: e.message };
   }
 }
 ```
 
-`qcheck.given(generator)` запускает property-test:
+```gleam
+@external(javascript, "./storage_ffi.mjs", "getItem")
+pub fn get_item(key: String) -> Result(String, Nil)
 
-1. Генерирует случайные значения с помощью `generator`
-2. Передаёт каждое значение в функцию-свойство
-3. Если свойство нарушено — **сжимает** (shrinks) контрпример до минимального
+@external(javascript, "./storage_ffi.mjs", "setItem")
+pub fn set_item(key: String, value: String) -> Result(Nil, String)
+```
 
-### Генераторы
+В JavaScript `Result` представлен как объект с полем `type`: `{type: "Ok", 0: value}` для успеха и `{type: "Error", 0: error}` для ошибки. FFI-функция вручную создаёт эти объекты, а Gleam воспринимает их как типобезопасный `Result`. Обратите внимание: `null` из `localStorage.getItem` конвертируется в `Error(Nil)`, а ошибка `localStorage.setItem` — в `Error(String)`.
 
-Генераторы — источники случайных данных:
+## Двойной FFI (Erlang + JavaScript)
+
+Одна функция может иметь реализации для обоих таргетов:
 
 ```gleam
-// Примитивные генераторы
-qcheck.int()              // случайный Int
-qcheck.float()            // случайный Float
-qcheck.string()           // случайная String
-qcheck.bool()             // True или False
-
-// Коллекции
-qcheck.list(qcheck.int())           // List(Int)
-qcheck.list(qcheck.string())        // List(String)
-
-// Ограниченные диапазоны
-qcheck.int_uniform_inclusive(1, 100)  // Int от 1 до 100
-qcheck.small_positive_or_zero_int()   // маленькие неотрицательные
-
-// Константы и выбор
-qcheck.return(42)                    // всегда 42
-qcheck.from_list([1, 2, 3])         // случайный из списка
+@external(erlang, "erlang", "system_time")
+@external(javascript, "./time_ffi.mjs", "systemTime")
+pub fn system_time() -> Int
 ```
 
-Генераторы компонуются: `qcheck.list(qcheck.int())` создаёт список из случайных целых. Каждый генератор умеет не только генерировать, но и сжимать (shrink) значения при нахождении контрпримера.
+Компилятор выберет нужную реализацию в зависимости от таргета (`gleam build --target erlang` или `--target javascript`).
 
-### Shrinking — сжатие контрпримеров
-
-Когда свойство нарушено на входе `[99, -42, 73, 0, -15]`, qcheck не просто сообщает об ошибке — он **сжимает** контрпример, убирая лишние элементы и уменьшая числа, пока свойство всё ещё нарушено:
-
-```
-Failing input: [99, -42, 73, 0, -15]
-After shrinking: [1, 0]
-```
-
-Это экономит время на отладку — вместо сложного случая вы видите минимальный.
-
-### Пользовательские генераторы
-
-Можно создавать генераторы для своих типов:
+### Пример: универсальное логирование
 
 ```gleam
-import qcheck
+// src/logger.gleam
+@external(erlang, "io", "format")
+@external(javascript, "./logger_ffi.mjs", "log")
+pub fn log(message: String) -> Nil
+```
 
-pub type Color {
-  Red
-  Green
-  Blue
-}
-
-fn color_generator() -> qcheck.Generator(Color) {
-  qcheck.from_list([Red, Green, Blue])
-}
-
-pub type Point {
-  Point(x: Int, y: Int)
-}
-
-fn point_generator() -> qcheck.Generator(Point) {
-  use x <- qcheck.parameter(qcheck.int())
-  use y <- qcheck.parameter(qcheck.int())
-  qcheck.return(Point(x:, y:))
+```javascript
+// src/logger_ffi.mjs
+export function log(message) {
+  console.log(message);
 }
 ```
 
-`qcheck.parameter` позволяет комбинировать примитивные генераторы в генератор составного типа. Синтаксис `use x <- qcheck.parameter(gen)` последовательно «разворачивает» значения из генераторов, аналогично `use` для `Result`.
+Такой код работает и на BEAM, и в браузере — компилятор автоматически выбирает правильную реализацию.
 
-### Какие свойства тестировать?
+### Функции с Gleam-реализацией + FFI
 
-Вот классические свойства, применимые к разным функциям:
-
-**Инволюция** — применение дважды возвращает оригинал:
+Можно объявить функцию с телом на Gleam и FFI-альтернативой. Если FFI доступен для текущего таргета, он используется; иначе — Gleam-реализация:
 
 ```gleam
-pub fn reverse_involution_test() {
-  use xs <- qcheck.given(qcheck.list(qcheck.int()))
-  list.reverse(list.reverse(xs)) == xs
-  |> should.be_true
+@external(javascript, "./fast_ffi.mjs", "reverse")
+pub fn reverse(xs: List(a)) -> List(a) {
+  // Gleam-реализация как fallback
+  list.reverse(xs)
 }
 ```
 
-**Идемпотентность** — повторное применение не меняет результат:
+Такой подход позволяет использовать оптимизированную нативную реализацию там, где она доступна, и автоматически откатываться к Gleam-коду на других платформах.
+
+## gleam_javascript — привязки к JavaScript
+
+Библиотека `gleam_javascript` предоставляет типизированные обёртки над JavaScript API.
+
+### gleam/javascript/promise
+
+Промисы — основа асинхронности в JavaScript:
 
 ```gleam
-pub fn sort_idempotent_test() {
-  use xs <- qcheck.given(qcheck.list(qcheck.int()))
-  let sorted = list.sort(xs, int.compare)
-  list.sort(sorted, int.compare) == sorted
-  |> should.be_true
-}
+import gleam/javascript/promise
+
+// Создание промиса
+promise.new(fn(resolve, _reject) {
+  resolve(42)
+})
+// Promise(Int)
+
+// Трансформация результата
+promise.new(fn(resolve, _reject) { resolve(42) })
+|> promise.map(fn(x) { x * 2 })
+// Promise(Int) — 84
+
+// Цепочка промисов
+promise.new(fn(resolve, _reject) { resolve("https://api.example.com") })
+|> promise.then(fn(url) {
+  // Возвращаем новый промис
+  fetch(url)
+})
+// Promise(Response)
+
+// Обработка ошибок
+promise.new(fn(_resolve, reject) { reject("oops") })
+|> promise.rescue(fn(error) {
+  io.println("Error: " <> error)
+  promise.resolve(0)  // Fallback значение
+})
 ```
 
-**Сохранение инварианта** — свойство выполняется для любого входа:
+Gleam предоставляет типобезопасный API для работы с промисами: `promise.new` создаёт промис с resolve/reject callback'ами, `promise.map` трансформирует результат (аналог `.then()` в JS), `promise.then` позволяет вернуть новый промис (для цепочек), `promise.rescue` обрабатывает ошибки. Все функции сохраняют типы — компилятор знает, что `Promise(Int)` в итоге вернёт `Int`.
+
+### Пример: fetch API
+
+```javascript
+// src/http_ffi.mjs
+export function fetch(url) {
+  return globalThis.fetch(url)
+    .then(response => response.text())
+    .then(text => ({ type: "Ok", 0: text }))
+    .catch(error => ({ type: "Error", 0: error.message }));
+}
+```
 
 ```gleam
-pub fn sort_preserves_length_test() {
-  use xs <- qcheck.given(qcheck.list(qcheck.int()))
-  list.length(list.sort(xs, int.compare)) == list.length(xs)
-  |> should.be_true
-}
+import gleam/javascript/promise
+
+@external(javascript, "./http_ffi.mjs", "fetch")
+pub fn fetch(url: String) -> promise.Promise(Result(String, String))
+
+// Использование
+fetch("https://pokeapi.co/api/v2/pokemon/pikachu")
+|> promise.map(fn(result) {
+  case result {
+    Ok(body) -> io.println("Got: " <> body)
+    Error(err) -> io.println("Error: " <> err)
+  }
+})
 ```
 
-**Roundtrip** — encode → decode = оригинал:
+FFI-функция `fetch` оборачивает нативный `fetch()` и конвертирует JavaScript Promise в Gleam `promise.Promise`. Внутри промиса мы получаем текст через `.text()`, затем оборачиваем результат в `Result` — ошибки сети перехватываются `.catch()` и становятся `Error(String)`. Gleam-код использует `promise.map` для работы с асинхронным результатом.
+
+### gleam/javascript/array
+
+JavaScript массивы — mutable, в отличие от immutable Gleam `List`:
 
 ```gleam
-pub fn json_roundtrip_test() {
-  use xs <- qcheck.given(qcheck.list(qcheck.int()))
-  xs
-  |> encode_ints
-  |> decode_ints
-  |> should.equal(Ok(xs))
-}
+import gleam/javascript/array
+
+// Создание
+let arr = array.from_list([1, 2, 3])
+
+// Доступ
+array.get(arr, 0)  // Ok(1)
+array.get(arr, 10) // Error(Nil)
+
+// Длина
+array.length(arr)  // 3
+
+// Конвертация обратно в List
+array.to_list(arr)  // [1, 2, 3]
 ```
 
-**Постусловие** — результат удовлетворяет определённому свойству:
+**Важно:** `array.from_list` создаёт копию, а не ссылку — изменения в массиве не влияют на исходный список.
+
+### gleam/javascript/map
+
+JavaScript объекты как словари:
 
 ```gleam
-pub fn abs_non_negative_test() {
-  use n <- qcheck.given(qcheck.int())
-  int.absolute_value(n) >= 0
-  |> should.be_true
-}
+import gleam/javascript/map
+
+// Создание
+let m = map.new()
+  |> map.set("name", "Alice")
+  |> map.set("age", "30")
+
+// Чтение
+map.get(m, "name")  // Ok("Alice")
+map.get(m, "city")  // Error(Nil)
+
+// Размер
+map.size(m)  // 2
 ```
 
-Каждый из этих паттернов проверяет фундаментальные математические свойства, а не конкретные примеры. Если функция нарушает инволюцию или идемпотентность — это указывает на серьёзный баг в логике, а не просто неверный частный случай.
+JavaScript Map (не путать с `gleam/dict`) — mutable структура для хранения пар ключ-значение. В отличие от Gleam словарей, изменения в `javascript/map` мутируют исходный объект. `map.new()` создаёт новый Map, `map.set` добавляет пару, `map.get` возвращает `Result` — `Error(Nil)` если ключа нет.
 
-## Snapshot-тестирование с birdie
+## Модель конкурентности: BEAM vs JavaScript
 
-**Snapshot-тесты** сохраняют «снимок» вывода функции и сравнивают с ним при последующих запусках. Это удобно для:
+### BEAM: процессы и акторы
 
-- Форматированного вывода (таблицы, отчёты)
-- Сериализации (JSON, HTML)
-- Диагностических сообщений
-
-### Как работает birdie
+- **Легковесные процессы** — миллионы одновременных процессов
+- **Изолированная память** — каждый процесс имеет свою память
+- **Передача сообщений** — копирование данных между процессами
+- **Преемптивная многозадачность** — планировщик честно распределяет CPU
 
 ```gleam
-import birdie
+// BEAM: параллельные процессы
+import gleam/erlang/process
 
-pub fn format_table_test() {
-  format_table(["Name", "Age"], [["Alice", "30"], ["Bob", "25"]])
-  |> birdie.snap("format simple table")
+let pid1 = process.start(fn() { heavy_computation_1() }, True)
+let pid2 = process.start(fn() { heavy_computation_2() }, True)
+// Оба вычисления идут параллельно на разных ядрах
+```
+
+На BEAM каждый `process.start` создаёт настоящий легковесный процесс с собственным планировщиком. Два процесса выполняются **одновременно** на разных CPU-ядрах — это истинный параллелизм. Процессы изолированы: каждый имеет свою память, взаимодействие только через передачу сообщений.
+
+### JavaScript: event loop и промисы
+
+- **Однопоточность** — один поток выполнения
+- **Event loop** — очередь задач
+- **Async/await** — синтаксический сахар над промисами
+- **Не блокирующий I/O** — операции вывода не блокируют поток
+
+```javascript
+// JavaScript: concurrency через промисы
+const result1 = fetch("https://api.example.com/1");
+const result2 = fetch("https://api.example.com/2");
+
+Promise.all([result1, result2]).then(([r1, r2]) => {
+  // Оба запроса выполнялись "параллельно" (но не на разных ядрах)
+});
+```
+
+В JavaScript есть только один поток выполнения. `Promise.all` запускает оба `fetch` **конкурентно**: event loop переключается между ними, пока ждёт I/O операций. Но тяжёлые вычисления заблокируют весь поток — нельзя использовать несколько CPU-ядер без Web Workers. Это конкурентность (concurrency), а не параллелизм (parallelism).
+
+### Ключевые различия
+
+| BEAM | JavaScript |
+| ------ | ----------- |
+| Истинный параллелизм (multicore) | Конкурентность (event loop) |
+| Процессы изолированы | Общее состояние (shared memory) |
+| Передача сообщений | Callbacks/Promises |
+| Fault tolerance (let it crash) | Error handling (try/catch) |
+
+**Вывод:** на BEAM можно использовать все ядра CPU для параллельных вычислений. В JavaScript "параллелизм" — это иллюзия: event loop переключается между задачами, но в каждый момент выполняется только одна.
+
+## Типобезопасный DOM API
+
+### Пример: работа с элементами
+
+```javascript
+// src/dom_ffi.mjs
+export function getElementById(id) {
+  const element = document.getElementById(id);
+  if (element === null) {
+    return { type: "Error", 0: undefined };
+  }
+  return { type: "Ok", 0: element };
+}
+
+export function setInnerText(element, text) {
+  element.innerText = text;
+}
+
+export function addEventListener(element, event, handler) {
+  element.addEventListener(event, handler);
 }
 ```
-
-При первом запуске `gleam test`:
-
-1. birdie создаёт файл `birdie_snapshots/format_simple_table.accepted` с выводом функции
-2. Тест проходит
-
-При последующих запусках:
-
-1. birdie сравнивает текущий вывод с сохранённым
-2. Если совпадает — тест проходит
-3. Если отличается — тест падает, показывая diff
-
-### Управление снимками
-
-```sh
-# Запуск тестов (birdie создаёт .new файлы для новых/изменённых снимков)
-$ gleam test
-
-# Интерактивный ревью: принять, отклонить или пропустить каждый снимок
-$ gleam run -m birdie
-```
-
-birdie показывает diff для каждого изменённого снимка и предлагает:
-
-- **Accept** — принять новый снимок
-- **Reject** — оставить старый
-- **Skip** — решить позже
-
-### Когда использовать snapshot-тесты
-
-- **Форматированный вывод**: таблицы, отчёты, pretty-print
-- **Сериализация**: JSON, TOML, XML
-- **Сложные структуры**: где `should.equal` требует громоздкий ожидаемый результат
-- **Регрессии формата**: заметить, если вывод изменился неожиданно
-
-Snapshot-тесты **не** заменяют unit-тесты и PBT — они дополняют их. Используйте unit-тесты для логики, PBT для свойств, snapshots для форматирования.
-
-## Проект: тестирование библиотеки коллекций
-
-Объединим все подходы для тестирования функций из предыдущих глав.
-
-### Unit-тесты
 
 ```gleam
-import gleam/list
-import gleam/int
-import gleeunit/should
+pub type Element
 
-pub fn sort_empty_test() {
-  list.sort([], int.compare)
-  |> should.equal([])
-}
+@external(javascript, "./dom_ffi.mjs", "getElementById")
+pub fn get_element_by_id(id: String) -> Result(Element, Nil)
 
-pub fn sort_single_test() {
-  list.sort([42], int.compare)
-  |> should.equal([42])
-}
+@external(javascript, "./dom_ffi.mjs", "setInnerText")
+pub fn set_inner_text(element: Element, text: String) -> Nil
 
-pub fn sort_already_sorted_test() {
-  list.sort([1, 2, 3, 4, 5], int.compare)
-  |> should.equal([1, 2, 3, 4, 5])
-}
-
-pub fn sort_reverse_test() {
-  list.sort([5, 4, 3, 2, 1], int.compare)
-  |> should.equal([1, 2, 3, 4, 5])
-}
-
-pub fn sort_duplicates_test() {
-  list.sort([3, 1, 3, 1, 2], int.compare)
-  |> should.equal([1, 1, 2, 3, 3])
-}
+@external(javascript, "./dom_ffi.mjs", "addEventListener")
+pub fn add_event_listener(
+  element: Element,
+  event: String,
+  handler: fn() -> Nil,
+) -> Nil
 ```
 
-Пять тестов покрывают ключевые граничные случаи: пустой список, один элемент, уже отсортированный, обратный порядок, дубликаты. Для конкретных значений unit-тесты читаются как документация.
+Внешний тип `Element` скрывает реализацию DOM-элемента — в Gleam это просто непрозрачный тип. `get_element_by_id` возвращает `Result`: если элемент не найден (`null` в JS), получаем `Error(Nil)`. Функции `set_inner_text` и `add_event_listener` принимают `Element` и безопасно вызывают соответствующие DOM API.
 
-### Property-based тесты
+### Пример использования
 
 ```gleam
-import qcheck
-
-pub fn sort_output_is_sorted_test() {
-  use xs <- qcheck.given(qcheck.list(qcheck.int()))
-  let sorted = list.sort(xs, int.compare)
-  is_sorted(sorted)
-  |> should.be_true
-}
-
-pub fn sort_preserves_elements_test() {
-  use xs <- qcheck.given(qcheck.list(qcheck.int()))
-  let sorted = list.sort(xs, int.compare)
-  list.sort(xs, int.compare) == list.sort(sorted, int.compare)
-  |> should.be_true
+pub fn main() {
+  case get_element_by_id("app") {
+    Ok(element) -> {
+      set_inner_text(element, "Hello from Gleam!")
+      add_event_listener(element, "click", fn() {
+        set_inner_text(element, "Clicked!")
+      })
+    }
+    Error(_) -> io.println("Element not found")
+  }
 }
 ```
 
-PBT-тесты дополняют unit-тесты: там где unit проверяет «правильный ли ответ для [3,1,2]», PBT проверяет «остаётся ли отсортированный результат стабильным при повторной сортировке» для любого возможного входа.
+Типичный паттерн работы с DOM: получаем элемент через `get_element_by_id`, обрабатываем случай отсутствия элемента через pattern matching на `Result`, затем безопасно работаем с гарантированно существующим элементом. Обработчик события — обычная Gleam-функция, которая компилируется в JavaScript callback.
 
-### Snapshot-тесты
+## Интеграция с JavaScript-библиотеками
+
+### Пример: wrapper для date-fns
+
+```javascript
+// src/datefns_ffi.mjs
+import { format, addDays } from 'date-fns';
+
+export function formatDate(date, pattern) {
+  return format(date, pattern);
+}
+
+export function addDaysToDate(date, days) {
+  return addDays(date, days);
+}
+
+export function now() {
+  return new Date();
+}
+```
 
 ```gleam
-import birdie
+pub type JSDate
 
-pub fn format_table_snapshot_test() {
-  format_table(
-    ["ID", "Name", "Score"],
-    [["1", "Alice", "95"], ["2", "Bob", "87"], ["3", "Charlie", "92"]],
-  )
-  |> birdie.snap("score table")
+@external(javascript, "./datefns_ffi.mjs", "now")
+pub fn now() -> JSDate
+
+@external(javascript, "./datefns_ffi.mjs", "formatDate")
+pub fn format_date(date: JSDate, pattern: String) -> String
+
+@external(javascript, "./datefns_ffi.mjs", "addDaysToDate")
+pub fn add_days(date: JSDate, days: Int) -> JSDate
+
+// Использование
+pub fn example() {
+  let today = now()
+  let tomorrow = add_days(today, 1)
+  format_date(tomorrow, "yyyy-MM-dd")
+  // "2026-02-21"
 }
 ```
 
-Снимок фиксирует форматирование таблицы — любое изменение в пробелах, разделителях или выравнивании будет замечено. `birdie.snap` принимает уникальное имя снимка, которое становится именем файла.
-
-## Тестирование JSON roundtrip
-
-Roundtrip-тесты — один из самых мощных паттернов для PBT. Идея: если мы кодируем значение в JSON и тут же декодируем обратно, должны получить оригинал.
-
-```gleam
-import gleam/dynamic/decode
-import gleam/json
-
-// Кодирование списка Int в JSON
-pub fn encode_ints(xs: List(Int)) -> String {
-  xs
-  |> json.array(json.int)
-  |> json.to_string
-}
-
-// Декодирование JSON в список Int
-pub fn decode_ints(s: String) -> Result(List(Int), Nil) {
-  json.parse(s, decode.list(decode.int))
-  |> result.map_error(fn(_) { Nil })
-}
-
-// Property: roundtrip
-pub fn json_roundtrip_test() {
-  use xs <- qcheck.given(qcheck.list(qcheck.int()))
-  xs
-  |> encode_ints
-  |> decode_ints
-  |> should.equal(Ok(xs))
-}
-```
-
-Этот тест генерирует сотни случайных списков и проверяет, что encode → decode = оригинал. Если есть баг в кодировщике или декодировщике — qcheck его найдёт.
-
-## CI: тестирование в GitHub Actions
-
-Настройка CI для Gleam-проекта:
-
-```yaml
-# .github/workflows/test.yml
-name: Test
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: erlef/setup-beam@v1
-        with:
-          otp-version: "27.0"
-          gleam-version: "1.6.0"
-      - run: gleam test
-      - run: gleam format --check src/ test/
-```
-
-Ключевые шаги:
-
-1. **setup-beam** — устанавливает Erlang/OTP и Gleam
-2. **gleam test** — запускает все тесты
-3. **gleam format --check** — проверяет форматирование (без изменения файлов)
+Этот пример показывает интеграцию с npm-пакетами: FFI-файл импортирует `date-fns`, экспортирует обёртки над его функциями. Со стороны Gleam мы работаем с типобезопасным API: `JSDate` — внешний тип (JavaScript `Date` объект), функции принимают и возвращают Gleam-типы. Компилятор гарантирует, что мы не передадим строку вместо даты.
 
 ## Упражнения
-
-В этой главе упражнения необычные: вы будете реализовывать функции **и** видеть, как они тестируются разными подходами (unit, PBT, snapshot).
 
 Решения пишите в файле `exercises/chapter09/test/my_solutions.gleam`. Запускайте тесты:
 
 ```sh
-$ cd exercises/chapter09
-$ gleam test
+cd exercises/chapter09
+gleam test --target javascript
 ```
 
-Запускайте тесты после каждого упражнения — они проверяют как юнит-тесты, так и property-based тесты для ваших реализаций.
+### 1. current_timestamp — Date.now() (Лёгкое)
 
-### 1. is_sorted — проверка сортировки (Лёгкое)
-
-Реализуйте функцию, проверяющую, отсортирован ли список по возрастанию.
+Реализуйте функцию, возвращающую текущее время в миллисекундах:
 
 ```gleam
-pub fn is_sorted(xs: List(Int)) -> Bool
+pub fn current_timestamp() -> Int
 ```
 
-**Примеры:**
+**Подсказка:** создайте `my_ffi.mjs` с функцией, вызывающей `Date.now()`.
 
-```
-is_sorted([]) == True
-is_sorted([1]) == True
-is_sorted([1, 2, 3, 4, 5]) == True
-is_sorted([1, 3, 2]) == False
-is_sorted([5, 4, 3]) == False
-```
+### 2. local_storage — get/set (Среднее)
 
-**Подсказка:** рекурсия с pattern matching на `[a, b, ..rest]`. Базовые случаи: `[]` и `[_]` → True.
-
-### 2. encode_ints / decode_ints — JSON roundtrip (Среднее)
-
-Реализуйте кодирование и декодирование списка целых чисел в/из JSON.
+Реализуйте типобезопасный интерфейс для localStorage:
 
 ```gleam
-pub fn encode_ints(xs: List(Int)) -> String
-pub fn decode_ints(s: String) -> Result(List(Int), Nil)
+pub fn storage_get(key: String) -> Result(String, Nil)
+pub fn storage_set(key: String, value: String) -> Result(Nil, String)
+pub fn storage_remove(key: String) -> Nil
 ```
 
-**Примеры:**
+**Подсказка:** обработайте случай `localStorage.getItem(key) === null` как `Error(Nil)`.
 
-```
-encode_ints([1, 2, 3]) == "[1,2,3]"
-decode_ints("[1,2,3]") == Ok([1, 2, 3])
-decode_ints("not json") == Error(Nil)
-```
+### 3. console_log_levels — разные уровни логов (Среднее)
 
-Тест проверит roundtrip: `encode_ints(xs) |> decode_ints == Ok(xs)`.
-
-**Подсказка:** `json.array(xs, json.int) |> json.to_string` для кодирования. `json.parse(s, decode.list(decode.int))` для декодирования.
-
-### 3. my_sort — сортировка с PBT (Среднее)
-
-Реализуйте сортировку списка целых чисел (любым алгоритмом).
+Реализуйте функции для разных уровней логирования:
 
 ```gleam
-pub fn my_sort(xs: List(Int)) -> List(Int)
+pub fn console_log(message: String) -> Nil
+pub fn console_warn(message: String) -> Nil
+pub fn console_error(message: String) -> Nil
 ```
 
-Тесты проверят несколько свойств вашей сортировки через qcheck:
+**Подсказка:** `console.log()`, `console.warn()`, `console.error()`.
 
-- Результат отсортирован (каждый элемент ≤ следующего)
-- Длина сохраняется
-- Идемпотентность (повторная сортировка не меняет результат)
-- Сохранение элементов (те же элементы, что и на входе)
+### 4. timeout — setTimeout wrapper (Среднее)
 
-**Подсказка:** можно использовать `list.sort(xs, int.compare)` или написать свою реализацию (insertion sort, merge sort).
-
-### 4. int_in_range — генератор чисел в диапазоне (Среднее)
-
-Реализуйте функцию-генератор, которая создаёт целые числа в заданном диапазоне `[lo, hi]`.
+Реализуйте типобезопасную обёртку для setTimeout:
 
 ```gleam
-pub fn int_in_range(lo: Int, hi: Int) -> qcheck.Generator(Int)
+pub type TimeoutId
+
+pub fn set_timeout(callback: fn() -> Nil, delay: Int) -> TimeoutId
+pub fn clear_timeout(id: TimeoutId) -> Nil
 ```
 
-Тесты проверят свойства генератора:
+**Подсказка:** в JavaScript `setTimeout` возвращает число (id таймера).
 
-- Все сгенерированные числа ≥ lo
-- Все сгенерированные числа ≤ hi
+### 5. fetch_json — HTTP запрос с парсингом (Среднее-Сложное)
 
-**Подсказка:** используйте `qcheck.int_uniform_inclusive(lo, hi)`.
-
-### 5. clamp — ограничение значения с PBT (Сложное)
-
-Реализуйте функцию, ограничивающую значение диапазоном `[lo, hi]`.
+Реализуйте функцию для HTTP-запросов, возвращающую промис:
 
 ```gleam
-pub fn clamp(value: Int, lo: Int, hi: Int) -> Int
+pub fn fetch_json(url: String) -> promise.Promise(Result(String, String))
 ```
 
-**Примеры:**
+**Подсказка:** используйте `fetch()`, затем `.text()`, оберните в `Promise.resolve({type: "Ok", 0: text})`.
 
+### 6. query_selector — типобезопасный поиск элементов (Сложное)
+
+Реализуйте функцию поиска элемента по CSS-селектору:
+
+```gleam
+pub type Element
+
+pub fn query_selector(selector: String) -> Result(Element, Nil)
+pub fn query_selector_all(selector: String) -> List(Element)
 ```
-clamp(5, 1, 10) == 5     // в диапазоне — не меняется
-clamp(-3, 0, 100) == 0   // меньше lo — возвращает lo
-clamp(999, 0, 100) == 100 // больше hi — возвращает hi
+
+**Подсказка:** `document.querySelector` возвращает `null` если не найдено. Для `querySelectorAll` преобразуйте `NodeList` в массив через `Array.from()`, затем в Gleam List.
+
+### 7. json_parse_safe — безопасный JSON.parse (Сложное)
+
+Реализуйте безопасную обёртку для `JSON.parse`:
+
+```gleam
+pub fn json_parse(json_str: String) -> Result(dynamic.Dynamic, String)
 ```
 
-Тесты проверят через qcheck:
+**Подсказка:** оберните `JSON.parse` в `try/catch`, верните `{type: "Ok", 0: parsed}` или `{type: "Error", 0: error.message}`.
 
-- Результат всегда ≥ lo
-- Результат всегда ≤ hi
-- Если value в диапазоне — возвращается без изменений
-- Идемпотентность: `clamp(clamp(x, lo, hi), lo, hi) == clamp(x, lo, hi)`
+### 8. event_target_value — получение значения из event.target (Сложное)
 
-**Подсказка:** `int.min(hi, int.max(lo, value))` или case-выражение с guards.
+Реализуйте функцию извлечения значения из события input:
+
+```gleam
+pub type Event
+
+pub fn event_target_value(event: Event) -> Result(String, Nil)
+```
+
+**Подсказка:** проверьте `event.target?.value`, верните `Error` если `undefined`.
 
 ## Заключение
 
-В этой главе мы изучили:
+В этой главе мы изучили взаимодействие Gleam с JavaScript:
 
-- **gleeunit** — стандартный тестовый раннер с утверждениями `should.*`
-- **Организация тестов** — именование, группировка, изоляция
-- **Тестирование акторов** — создание, отправка сообщений, таймауты
-- **Property-based testing** с qcheck — генераторы, свойства, shrinking
-- **Snapshot-тестирование** с birdie — снимки вывода, интерактивный ревью
-- **JSON roundtrip** — мощный паттерн для PBT
-- **CI** — GitHub Actions для автоматического тестирования
+- **External functions** — вызов JavaScript из Gleam через `.mjs` файлы
+- **Двойной FFI** — универсальный код для Erlang и JavaScript
+- **gleam_javascript** — промисы, массивы, объекты
+- **Модель конкурентности** — различия между BEAM processes и JS event loop
+- **DOM API** — типобезопасная работа с браузером
+- **Интеграция с JS-библиотеками** — обёртки для сторонних пакетов
 
-В следующей главе мы создадим полноценное веб-приложение с Wisp — HTTP-фреймворком для Gleam.
+JavaScript-таргет позволяет использовать Gleam для фронтенд-разработки — от простых скриптов до полноценных SPA. При этом сохраняются все преимущества типобезопасности и паттерн-матчинга.
+
+В следующей главе мы объединим знания обоих таргетов и построим full-stack приложение: Gleam на сервере (BEAM) и Gleam в браузере (JavaScript).

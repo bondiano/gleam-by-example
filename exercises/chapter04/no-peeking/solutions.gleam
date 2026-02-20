@@ -1,6 +1,6 @@
 //// Референсные решения — не подсматривайте, пока не попробуете сами!
 
-import chapter04.{type FsQuery, type FSNode, Directory, File, FsQuery}
+import chapter04.{type FSNode, type FsQuery, Directory, File, FsQuery}
 import gleam/dict
 import gleam/list
 import gleam/option.{None, Some}
@@ -17,8 +17,7 @@ pub fn total_size(node: FSNode) -> Int {
 pub fn all_files(node: FSNode) -> List(String) {
   case node {
     File(name:, ..) -> [name]
-    Directory(children:, ..) ->
-      list.flat_map(children, all_files)
+    Directory(children:, ..) -> list.flat_map(children, all_files)
   }
 }
 
@@ -47,8 +46,7 @@ pub fn largest_file(node: FSNode) -> Result(#(String, Int), Nil) {
 fn collect_files(node: FSNode) -> List(#(String, Int)) {
   case node {
     File(name:, size:) -> [#(name, size)]
-    Directory(children:, ..) ->
-      list.flat_map(children, collect_files)
+    Directory(children:, ..) -> list.flat_map(children, collect_files)
   }
 }
 

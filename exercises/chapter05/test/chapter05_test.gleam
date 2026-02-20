@@ -1,6 +1,6 @@
+import gleam/option.{None, Some}
 import gleeunit
 import gleeunit/should
-import gleam/option.{None, Some}
 import my_solutions
 
 pub fn main() -> Nil {

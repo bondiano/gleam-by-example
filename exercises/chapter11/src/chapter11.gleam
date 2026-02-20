@@ -1,134 +1,68 @@
-// Примеры: Lustre — виртуальный DOM, MVU, server-side HTML
-//
-// Этот файл демонстрирует ключевые паттерны Lustre:
-// 1. HTML DSL (element/html) для генерации HTML
-// 2. Model-View-Update (The Elm Architecture)
-// 3. Тестирование с lustre/dev/simulate
-
+import gleam/dynamic/decode
 import gleam/int
+import gleam/json
 import gleam/list
-import lustre
-import lustre/attribute
-import lustre/dev/simulate
-import lustre/element.{type Element}
-import lustre/element/html
-import lustre/event
+import gleam/result
+import gleam/string
 
-// ── 1. HTML DSL ──────────────────────────────────────────────────────────
-// Lustre используется для server-side HTML тоже: element.to_string → String
+// ============================================================
+// Пример: функции для unit-тестирования
+// ============================================================
 
-/// Карточка пользователя
-pub fn user_card(name: String, role: String) -> Element(msg) {
-  html.div([attribute.class("card")], [
-    html.h2([], [element.text(name)]),
-    html.span([attribute.class("role")], [element.text(role)]),
-  ])
+/// Сортирует список целых чисел
+pub fn sort(xs: List(Int)) -> List(Int) {
+  list.sort(xs, int.compare)
 }
 
-/// Навигационная ссылка
-pub fn nav_link(label: String, href: String, active: Bool) -> Element(msg) {
-  html.a(
-    [
-      attribute.href(href),
-      attribute.class(case active {
-        True -> "nav-link nav-link--active"
-        False -> "nav-link"
-      }),
-    ],
-    [element.text(label)],
-  )
-}
-
-// ── 2. TODO Item ──────────────────────────────────────────────────────────
-
-pub type Todo {
-  Todo(id: Int, text: String, done: Bool)
-}
-
-/// Рендерит одну задачу: чекбокс + текст
-pub fn todo_item(item: Todo) -> Element(msg) {
-  html.li(
-    [
-      attribute.class(case item.done {
-        True -> "todo todo--done"
-        False -> "todo"
-      }),
-    ],
-    [
-      html.span(
-        [],
-        [element.text(case item.done {
-          True -> "✓ " <> item.text
-          False -> "☐ " <> item.text
-        })],
-      ),
-    ],
-  )
-}
-
-/// Рендерит список задач или пустое состояние
-pub fn todo_list(todos: List(Todo)) -> Element(msg) {
-  case todos {
-    [] ->
-      html.p([attribute.class("empty")], [element.text("Список пуст")])
-    items ->
-      html.ul(
-        [],
-        list.map(items, todo_item),
-      )
+/// Проверяет, содержит ли список дубликаты
+pub fn has_duplicates(xs: List(a)) -> Bool {
+  case xs {
+    [] -> False
+    [first, ..rest] ->
+      case list.contains(rest, first) {
+        True -> True
+        False -> has_duplicates(rest)
+      }
   }
 }
 
-// ── 3. Counter App (полный MVU) ───────────────────────────────────────────
+// ============================================================
+// Пример: функции для snapshot-тестирования
+// ============================================================
 
-pub type CounterMsg {
-  Increment
-  Decrement
-  Reset
+/// Форматирует таблицу с заголовками и строками
+pub fn format_table(headers: List(String), rows: List(List(String))) -> String {
+  let header_line = string.join(headers, " | ")
+  let separator = string.repeat("-", string.length(header_line))
+  let data_lines =
+    rows
+    |> list.map(fn(row) { string.join(row, " | ") })
+    |> string.join("\n")
+  header_line <> "\n" <> separator <> "\n" <> data_lines
 }
 
-pub fn counter_init(_flags) -> Int {
-  0
+// ============================================================
+// Пример: JSON encode/decode для roundtrip-тестирования
+// ============================================================
+
+/// Кодирует список Int в JSON-строку
+pub fn encode_int_list(xs: List(Int)) -> String {
+  xs
+  |> json.array(json.int)
+  |> json.to_string
 }
 
-pub fn counter_update(model: Int, msg: CounterMsg) -> Int {
-  case msg {
-    Increment -> model + 1
-    Decrement -> model - 1
-    Reset -> 0
-  }
+/// Декодирует JSON-строку в список Int
+pub fn decode_int_list(s: String) -> Result(List(Int), Nil) {
+  json.parse(s, decode.list(decode.int))
+  |> result.map_error(fn(_) { Nil })
 }
 
-pub fn counter_view(model: Int) -> Element(CounterMsg) {
-  html.div([attribute.class("counter")], [
-    html.button([event.on_click(Decrement)], [element.text("−")]),
-    html.span([attribute.class("count")], [element.text(int.to_string(model))]),
-    html.button([event.on_click(Increment)], [element.text("+")]),
-    html.button([event.on_click(Reset)], [element.text("Сброс")]),
-  ])
-}
+// ============================================================
+// Пример: функция для PBT
+// ============================================================
 
-// Запуск счётчика в браузере:
-pub fn main() {
-  let app = lustre.simple(counter_init, counter_update, counter_view)
-
-  let assert Ok(_) = lustre.start(app, "#app", Nil)
-  Nil
-}
-
-// ── 4. Демонстрация lustre/dev/simulate ──────────────────────────────────
-
-pub fn simulate_counter_example() -> Int {
-  simulate.simple(
-    init: counter_init,
-    update: counter_update,
-    view: counter_view,
-  )
-  |> simulate.start(Nil)
-  |> simulate.message(Increment)
-  |> simulate.message(Increment)
-  |> simulate.message(Increment)
-  |> simulate.message(Decrement)
-  |> simulate.model
-  // → 2
+/// Ограничивает значение диапазоном [lo, hi]
+pub fn clamp(value: Int, lo: Int, hi: Int) -> Int {
+  int.min(hi, int.max(lo, value))
 }

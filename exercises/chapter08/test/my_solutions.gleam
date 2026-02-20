@@ -1,144 +1,127 @@
 //// Здесь вы можете писать свои решения упражнений.
-//// Тема: Процессы и OTP — акторы, сообщения, параллельные вычисления.
+//// Тема: Erlang FFI и системное программирование
 
-import gleam/dict.{type Dict}
-import gleam/erlang/process.{type Subject}
-import gleam/list
-import gleam/otp/actor
+import gleam/erlang/atom
+import gleam/erlang/process
 
 // ============================================================
-// Упражнение 1: echo_actor
+// Упражнение 1: system_time_seconds — FFI к erlang:system_time
 // ============================================================
 
-/// Тип сообщений для эхо-актора.
-pub type EchoMsg {
-  Echo(value: String, reply_to: Subject(String))
-}
-
-/// Запускает эхо-актор, который отвечает тем же сообщением.
-pub fn start_echo() -> Result(Subject(EchoMsg), actor.StartError) {
-  todo
-}
-
-/// Отправляет сообщение эхо-актору и получает ответ.
-pub fn send_echo(subj: Subject(EchoMsg), message: String) -> String {
-  todo
+/// Возвращает текущее время в секундах через FFI к Erlang.
+///
+/// Подсказка: используйте @external(erlang, "erlang", "system_time")
+/// с атомом "second". Создайте атом через:
+/// @external(erlang, "erlang", "binary_to_atom")
+/// fn binary_to_atom(s: String) -> atom.Atom
+pub fn system_time_seconds() -> Int {
+  todo as "Упражнение 1: реализуйте system_time_seconds"
 }
 
 // ============================================================
-// Упражнение 2: accumulator
+// Упражнение 2: get_api_base_url — переменные окружения
 // ============================================================
 
-/// Тип сообщений для актора-аккумулятора.
-pub type AccMsg {
-  Add(value: Int)
-  GetTotal(reply_to: Subject(Int))
-}
-
-/// Запускает актор-аккумулятор.
-pub fn start_accumulator() -> Result(Subject(AccMsg), actor.StartError) {
-  todo
-}
-
-/// Добавляет значение к аккумулятору.
-pub fn accumulate(subj: Subject(AccMsg), value: Int) -> Nil {
-  todo
-}
-
-/// Получает текущую сумму.
-pub fn get_total(subj: Subject(AccMsg)) -> Int {
-  todo
+/// Получает POKEAPI_BASE_URL из окружения или возвращает
+/// "https://pokeapi.co" по умолчанию.
+///
+/// Подсказка: создайте chapter08_ffi.erl с функцией get_env/1
+/// (как в примере из текста главы), затем используйте
+/// @external(erlang, "chapter08_ffi", "get_env")
+pub fn get_api_base_url() -> String {
+  todo as "Упражнение 2: реализуйте get_api_base_url"
 }
 
 // ============================================================
-// Упражнение 3: spawn_compute
+// Упражнение 3: file_exists — проверка существования файла
 // ============================================================
 
-/// Запускает вычисление в отдельном процессе и возвращает результат.
-pub fn spawn_compute(f: fn() -> a) -> a {
-  todo
-}
-
-// ============================================================
-// Упражнение 4: key_value_store
-// ============================================================
-
-/// Тип сообщений для KV-хранилища.
-pub type KvMsg {
-  Put(key: String, value: String)
-  Get(key: String, reply_to: Subject(Result(String, Nil)))
-  Delete(key: String)
-  AllKeys(reply_to: Subject(List(String)))
-}
-
-/// Запускает актор KV-хранилища.
-pub fn start_kv() -> Result(Subject(KvMsg), actor.StartError) {
-  todo
-}
-
-/// Сохраняет значение по ключу.
-pub fn kv_put(store: Subject(KvMsg), key: String, value: String) -> Nil {
-  todo
-}
-
-/// Получает значение по ключу.
-pub fn kv_get(store: Subject(KvMsg), key: String) -> Result(String, Nil) {
-  todo
-}
-
-/// Удаляет значение по ключу.
-pub fn kv_delete(store: Subject(KvMsg), key: String) -> Nil {
-  todo
-}
-
-/// Возвращает все ключи.
-pub fn kv_all_keys(store: Subject(KvMsg)) -> List(String) {
-  todo
+/// Проверяет, существует ли файл по указанному пути.
+///
+/// Подсказка: используйте @external(erlang, "filelib", "is_file")
+/// Не забудьте преобразовать String в Charlist через
+/// charlist.from_string()
+pub fn file_exists(path: String) -> Bool {
+  todo as "Упражнение 3: реализуйте file_exists"
 }
 
 // ============================================================
-// Упражнение 5: stack_actor
+// Упражнение 4: read_lines — чтение файла построчно
 // ============================================================
 
-/// Тип сообщений для стека.
-pub type StackMsg(a) {
-  StackPush(value: a)
-  StackPop(reply_to: Subject(Result(a, Nil)))
-  StackPeek(reply_to: Subject(Result(a, Nil)))
-  StackSize(reply_to: Subject(Int))
-}
-
-/// Запускает актор-стек.
-pub fn start_stack() -> Result(Subject(StackMsg(a)), actor.StartError) {
-  todo
-}
-
-/// Кладёт элемент на вершину стека.
-pub fn stack_push(stack: Subject(StackMsg(a)), value: a) -> Nil {
-  todo
-}
-
-/// Извлекает верхний элемент.
-pub fn stack_pop(stack: Subject(StackMsg(a))) -> Result(a, Nil) {
-  todo
-}
-
-/// Смотрит на верхний элемент, не удаляя.
-pub fn stack_peek(stack: Subject(StackMsg(a))) -> Result(a, Nil) {
-  todo
-}
-
-/// Возвращает количество элементов.
-pub fn stack_size(stack: Subject(StackMsg(a))) -> Int {
-  todo
+/// Читает файл и разбивает его на строки.
+///
+/// Подсказка:
+/// 1. Используйте FFI к file:read_file/1
+/// 2. Преобразуйте BitArray в String через bit_array.to_string
+/// 3. Разбейте на строки через string.split(..., "\n")
+pub fn read_lines(path: String) -> Result(List(String), String) {
+  todo as "Упражнение 4: реализуйте read_lines"
 }
 
 // ============================================================
-// Упражнение 6: parallel_map
+// Упражнение 5: LogLevel — безопасная работа с атомами
 // ============================================================
 
-/// Применяет функцию к каждому элементу списка параллельно.
-/// Результаты в том же порядке, что и входной список.
-pub fn parallel_map(items: List(a), f: fn(a) -> b) -> List(b) {
-  todo
+/// Уровни логирования.
+pub type LogLevel {
+  Debug
+  Info
+  Warning
+  LogError
+}
+
+/// Преобразует LogLevel в атом.
+///
+/// Подсказка: используйте atom.create для каждого варианта
+pub fn log_level_to_atom(level: LogLevel) -> atom.Atom {
+  todo as "Упражнение 5: реализуйте log_level_to_atom"
+}
+
+/// Преобразует атом в LogLevel.
+///
+/// Подсказка: используйте atom.to_string и pattern matching
+pub fn log_level_from_atom(a: atom.Atom) -> Result(LogLevel, Nil) {
+  todo as "Упражнение 5: реализуйте log_level_from_atom"
+}
+
+// ============================================================
+// Упражнение 6: pid_to_string — работа с процессами
+// ============================================================
+
+/// Преобразует Pid (идентификатор процесса BEAM) в строку.
+///
+/// Подсказка: используйте @external(erlang, "erlang", "pid_to_list"),
+/// который возвращает Charlist, затем преобразуйте в String
+pub fn pid_to_string(pid: process.Pid) -> String {
+  todo as "Упражнение 6: реализуйте pid_to_string"
+}
+
+// ============================================================
+// Упражнение 7: measure_time — измерение времени выполнения
+// ============================================================
+
+/// Измеряет время выполнения переданной функции.
+/// Возвращает кортеж #(результат, время_в_микросекундах).
+///
+/// Подсказка:
+/// 1. Получите время до вызова через erlang:monotonic_time(microsecond)
+/// 2. Вызовите f()
+/// 3. Получите время после
+/// 4. Вычтите и верните разницу
+pub fn measure_time(f: fn() -> a) -> #(a, Int) {
+  todo as "Упражнение 7: реализуйте measure_time"
+}
+
+// ============================================================
+// Упражнение 8: ensure_dir — создание директории
+// ============================================================
+
+/// Создаёт директорию (включая родительские).
+///
+/// Подсказка: используйте @external(erlang, "filelib", "ensure_dir")
+/// Эта функция требует путь к файлу (не директории!),
+/// поэтому добавьте "/" в конец пути перед вызовом
+pub fn ensure_dir(path: String) -> Result(Nil, String) {
+  todo as "Упражнение 8: реализуйте ensure_dir"
 }

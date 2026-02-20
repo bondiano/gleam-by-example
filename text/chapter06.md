@@ -2,6 +2,8 @@
 
 > «Строки — не байты. Байты — не строки.» — Эрланговская мудрость
 
+<!-- toc -->
+
 ## Цели главы
 
 В этой главе мы:
@@ -351,6 +353,7 @@ case data {
 ```
 
 Доступные спецификаторы сегментов:
+
 - `:8`, `:16`, `:32`, `:64` — размер в битах
 - `:bytes` — остаток как байты
 - `:bits` — остаток как биты
@@ -377,6 +380,7 @@ pub fn parse_packet(data: BitArray) -> Result(Packet, Nil) {
 ```
 
 Формат использует структуру TLV (Type-Length-Value):
+
 - Первый байт (`version:8`) — версия протокола
 - Следующие 2 байта (`len:16`) — длина полезной нагрузки (big-endian, до 65535)
 - Остаток (`payload:bytes`) — данные произвольной длины
@@ -463,6 +467,7 @@ regexp.scan(re, "alice@example bob@test")
 ```
 
 Тип `Match` содержит:
+
 - `content` — полное совпадение
 - `submatches` — список захваченных групп (в скобках), каждая `Option(String)`
 
@@ -504,6 +509,7 @@ parse_log("[ERROR] connection timeout")
 ```
 
 Разберём по шагам:
+
 1. Регулярное выражение `\[(\w+)\] (.+)` содержит две **группы захвата** (в скобках): `(\w+)` — одно или более «словесных» символов (уровень лога), и `(.+)` — всё после пробела (сообщение)
 2. `regexp.scan` возвращает список `Match` — мы ожидаем ровно одно совпадение
 3. Паттерн `[regexp.Match(_, [Some(level), Some(message)])]` деструктурирует результат: `_` — полное совпадение (нам не нужно), `Some(level)` и `Some(message)` — захваченные группы
@@ -667,6 +673,7 @@ let page =
 ```
 
 Проект демонстрирует:
+
 - `string.replace` — цепочка замен для экранирования
 - `list.map` + `string.concat` — сборка атрибутов
 - `string_tree` — эффективная конкатенация множества элементов
@@ -681,8 +688,8 @@ let page =
 Решения пишите в файле `exercises/chapter06/test/my_solutions.gleam`. Запускайте тесты:
 
 ```sh
-$ cd exercises/chapter06
-$ gleam test
+cd exercises/chapter06
+gleam test
 ```
 
 Каждое упражнение добавляет новую функцию в HTML-билдер. Начните с первого и двигайтесь по порядку.
@@ -696,6 +703,7 @@ pub fn escape_html(text: String) -> String
 ```
 
 Нужно заменить 5 символов:
+
 - `&` → `&amp;` (важно заменить **первым**, иначе сломаете остальные замены)
 - `<` → `&lt;`
 - `>` → `&gt;`
@@ -704,7 +712,7 @@ pub fn escape_html(text: String) -> String
 
 **Примеры:**
 
-```
+```text
 escape_html("<script>alert('xss')</script>")
 // "&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;"
 
@@ -728,7 +736,7 @@ pub fn tag(
 
 **Примеры:**
 
-```
+```text
 tag("p", [], "Hello")
 // "<p>Hello</p>"
 
@@ -739,7 +747,7 @@ tag("div", [#("class", "box"), #("id", "main")], "content")
 // "<div class=\"box\" id=\"main\">content</div>"
 ```
 
-**Подсказка:** для каждого атрибута `#(key, value)` сформируйте строку ` key="value"`, затем соедините через `string.concat`.
+**Подсказка:** для каждого атрибута `#(key, value)` сформируйте строку `key="value"`, затем соедините через `string.concat`.
 
 ### 3. build_list (Среднее)
 
@@ -751,7 +759,7 @@ pub fn build_list(items: List(String), ordered: Bool) -> String
 
 **Примеры:**
 
-```
+```text
 build_list(["яблоко", "банан", "вишня"], False)
 // "<ul><li>яблоко</li><li>банан</li><li>вишня</li></ul>"
 
@@ -773,7 +781,7 @@ pub fn linkify(text: String) -> String
 
 **Примеры:**
 
-```
+```text
 linkify("Смотрите https://gleam.run — отличный язык")
 // "Смотрите <a href=\"https://gleam.run\">https://gleam.run</a> — отличный язык"
 
@@ -799,7 +807,7 @@ pub fn build_table(
 
 **Примеры:**
 
-```
+```text
 build_table(
   ["Имя", "Возраст"],
   [["Алиса", "30"], ["Боб", "25"]],

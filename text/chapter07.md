@@ -1,189 +1,20 @@
-# FFI, JSON и типобезопасный парсинг
+# Type Safety и Parse Don't Validate
 
 > «Parse, don't validate» — Алексис Кинг
+
+<!-- toc -->
 
 ## Цели главы
 
 В этой главе мы:
 
-- Научимся вызывать Erlang и JavaScript функции через `@external`
-- Познакомимся с привязками из `gleam_erlang`
 - Поймём паттерн «Parse, Don't Validate»
 - Изучим непрозрачные типы (opaque types) и smart constructors
 - Разберём фантомные типы (phantom types) для типобезопасных контрактов
 - Освоим `gleam_json` для кодирования и декодирования JSON
 - Детально изучим `gleam/dynamic/decode`
+- Применим Railway-Oriented Programming для композиции парсинга и валидации
 - Построим PokeAPI-клиент, объединив все концепции
-
-## External functions
-
-Gleam имеет уникальную особенность — **двойной FFI**: можно вызывать функции и из Erlang, и из JavaScript, в зависимости от целевой платформы.
-
-### Вызов Erlang-функций
-
-Атрибут `@external` связывает Gleam-функцию с функцией из другого языка:
-
-```gleam
-// Вызов erlang:system_time/1
-@external(erlang, "erlang", "system_time")
-fn erl_system_time(unit: atom) -> Int
-
-// Можно также объявить как pub
-@external(erlang, "os", "system_time")
-pub fn os_system_time(unit: atom) -> Int
-```
-
-Синтаксис: `@external(target, module, function_name)`. Типы аргументов и возвращаемого значения объявляются в Gleam — компилятор доверяет вам, что сигнатура корректна.
-
-### Вызов JavaScript-функций
-
-Для JS-таргета FFI-функции определяются в отдельном `.mjs` файле:
-
-```gleam
-// В src/my_module.gleam
-@external(javascript, "./my_ffi.mjs", "getCurrentTime")
-pub fn current_time() -> Int
-```
-
-```javascript
-// В src/my_ffi.mjs
-export function getCurrentTime() {
-  return Date.now();
-}
-```
-
-Для JavaScript-таргета FFI-функция объявляется в Gleam с атрибутом `@external(javascript, ...)`, а её реализация помещается в отдельный `.mjs`-файл, который экспортирует соответствующую функцию.
-
-### Двойной FFI
-
-Одна функция может иметь реализации для обоих таргетов:
-
-```gleam
-@external(erlang, "erlang", "system_time")
-@external(javascript, "./time_ffi.mjs", "systemTime")
-pub fn system_time() -> Int
-```
-
-Компилятор выберет нужную реализацию в зависимости от таргета (`gleam build --target erlang` или `--target javascript`).
-
-### Функции с Gleam-реализацией + FFI
-
-Можно объявить функцию с телом на Gleam и FFI-альтернативой. Если FFI доступен для текущего таргета, он используется; иначе — Gleam-реализация:
-
-```gleam
-@external(erlang, "my_ffi", "fast_sort")
-pub fn sort(xs: List(Int)) -> List(Int) {
-  // Gleam-реализация как fallback
-  list.sort(xs, int.compare)
-}
-```
-
-Такой подход позволяет использовать оптимизированную нативную реализацию там, где она доступна, и автоматически откатываться к Gleam-коду на других платформах.
-
-## External types
-
-Внешние типы — типы, определённые вне Gleam. Их нельзя создать или разобрать напрямую в Gleam:
-
-```gleam
-// Тип Atom из Erlang — существует только на BEAM
-pub type Atom
-
-// Regex — внутренняя структура зависит от таргета
-pub type Regex
-```
-
-Для работы с внешними типами используются FFI-функции: конструкторы, аксессоры, преобразователи.
-
-## gleam_erlang — привязки к Erlang
-
-Библиотека `gleam_erlang` предоставляет типизированные обёртки над Erlang API.
-
-### gleam/erlang/atom
-
-Атомы — уникальные идентификаторы в Erlang. Они похожи на enum-значения, но создаются динамически:
-
-```gleam
-import gleam/erlang/atom
-
-// Создание атома из строки
-let assert Ok(a) = atom.from_string("hello")
-
-// Обратно в строку
-atom.to_string(a)  // "hello"
-
-// Атомы интернированы — одинаковые строки дают один атом
-let assert Ok(a1) = atom.from_string("ok")
-let assert Ok(a2) = atom.from_string("ok")
-// a1 == a2
-```
-
-> **Внимание:** не создавайте атомы из пользовательского ввода! Таблица атомов в BEAM имеет ограниченный размер и не очищается сборщиком мусора.
-
-### Переменные окружения через FFI
-
-В ранних версиях `gleam_erlang` был модуль `gleam/erlang/os`, но в текущей версии он удалён. Для работы с переменными окружения используем прямой FFI к Erlang. Создаём файл `src/my_ffi.erl`:
-
-```erlang
--module(my_ffi).
--export([get_env/1]).
-
-get_env(Name) ->
-    case os:getenv(binary_to_list(Name)) of
-        false -> {error, nil};
-        Value -> {ok, list_to_binary(Value)}
-    end.
-```
-
-И используем из Gleam:
-
-```gleam
-@external(erlang, "my_ffi", "get_env")
-fn get_env(name: String) -> Result(String, Nil)
-
-pub fn env_var_or_default(name: String, default: String) -> String {
-  case get_env(name) {
-    Ok(value) -> value
-    Error(_) -> default
-  }
-}
-```
-
-Это отличный пример применения FFI — нужная функция из Erlang, но нет готовой обёртки. Мы пишем небольшой Erlang-модуль и подключаем через `@external`.
-
-### gleam/erlang
-
-Общие утилиты:
-
-```gleam
-import gleam/erlang
-
-// rescue — перехват Erlang-исключений
-erlang.rescue(fn() { panic as "oops" })
-// Error(Errored(...))
-
-// get_line — чтение строки из stdin
-erlang.get_line("Введите имя: ")
-// Ok("Алиса\n")
-
-// priv_directory — путь к priv/ директории OTP-приложения
-erlang.priv_directory("my_app")
-// Ok("/path/to/my_app/priv")
-```
-
-Модуль `gleam/erlang` предоставляет утилиты для взаимодействия с BEAM-рантаймом: перехват исключений через `rescue`, чтение пользовательского ввода через `get_line` и доступ к ресурсам OTP-приложения через `priv_directory`.
-
-### gleam/erlang/charlist
-
-Charlist — строки Erlang (список целых чисел). Нужны для совместимости с Erlang API:
-
-```gleam
-import gleam/erlang/charlist
-
-let cl = charlist.from_string("hello")
-charlist.to_string(cl)  // "hello"
-```
-
-Charlist используется при вызове Erlang-функций, которые ожидают строки в виде списков символов — `charlist.from_string` и `charlist.to_string` обеспечивают конвертацию в обе стороны.
 
 ## Parse, Don't Validate
 
@@ -287,6 +118,7 @@ pub fn age_value(a: Age) -> Int {
 ```
 
 Паттерн:
+
 1. `opaque type` скрывает конструктор
 2. Smart constructor проверяет инварианты
 3. Аксессоры дают доступ к данным
@@ -367,7 +199,7 @@ pub fn publish(doc: Document(Verified)) -> Nil {
 
 Фантомный тип `Document(status)` кодирует состояние документа прямо в сигнатуре типа: `publish` принимает только `Document(Verified)`, и компилятор не позволит передать непроверенный документ без явного вызова `verify`.
 
-## gleam_json — кодирование
+## gleam_json — кодирование и декодирование
 
 Библиотека `gleam_json` предоставляет функции для работы с JSON.
 
@@ -437,14 +269,12 @@ User("Алиса", 30, "alice@example.com")
 
 Для каждого пользовательского типа создаётся функция-кодировщик, которая отображает поля Gleam-структуры в пары ключ-значение JSON — такой подход легко масштабируется на вложенные типы.
 
-## gleam_json — декодирование
+### Декодирование
 
 Декодирование — преобразование JSON-строки обратно в Gleam-типы. Это двухшаговый процесс:
 
 1. **Парсинг**: строка → Dynamic (нетипизированные данные)
 2. **Декодирование**: Dynamic → типизированное значение
-
-### json.parse + decoder
 
 ```gleam
 import gleam/dynamic/decode
@@ -777,8 +607,8 @@ pub fn parse_pokemon(json_str: String) -> Result(Pokemon, Nil) {
 Решения пишите в файле `exercises/chapter07/test/my_solutions.gleam`. Запускайте тесты:
 
 ```sh
-$ cd exercises/chapter07
-$ gleam test
+cd exercises/chapter07
+gleam test
 ```
 
 Запускайте тесты после каждого упражнения — они проверяют корректность реализации и подскажут, что ещё нужно доделать.
@@ -799,7 +629,7 @@ pub fn pokemon_id_to_path(id: PokemonId) -> String
 
 **Примеры:**
 
-```
+```text
 pokemon_id_new(25) |> result.is_ok == True
 pokemon_id_new(0) |> result.is_error == True
 pokemon_id_new(1026) |> result.is_error == True
@@ -809,19 +639,7 @@ pokemon_id_to_path(pokemon_id_new(25) |> result.unwrap(..))
 
 **Подсказка:** `pokemon_id_to_path` формирует строку `"/api/v2/pokemon/" <> int.to_string(id)`.
 
-### 2. Erlang FFI: время и окружение (Лёгкое)
-
-Реализуйте две функции через FFI к Erlang:
-
-```gleam
-pub fn system_time_seconds() -> Int
-pub fn get_api_base_url() -> String
-```
-
-- `system_time_seconds` — используйте `@external(erlang, "os", "system_time")` с атомом `"second"` (создайте атом через `@external(erlang, "erlang", "binary_to_atom")`)
-- `get_api_base_url` — читает переменную окружения `POKEAPI_BASE_URL` через Erlang-модуль `chapter07_ffi.erl` (функция `get_env/1`). Если переменная не установлена, возвращает `"https://pokeapi.co"`
-
-### 3. pokemon_decoder — расширенный декодер (Среднее)
+### 2. pokemon_decoder — расширенный декодер (Среднее)
 
 Расширьте тип `Pokemon` полями `abilities` и `stats`, затем реализуйте декодер для реального формата PokeAPI.
 
@@ -855,7 +673,7 @@ pub fn parse_pokemon(json_str: String) -> Result(Pokemon, Nil)
 
 **Подсказка:** создайте три вспомогательных декодера — `type_name_decoder` (через `decode.subfield(["type", "name"], ...)`), `ability_name_decoder` (через `decode.subfield(["ability", "name"], ...)`), `stat_decoder` (поле `"base_stat"` + subfield `["stat", "name"]`).
 
-### 4. pokemon_to_json — кодирование в JSON (Среднее)
+### 3. pokemon_to_json — кодирование в JSON (Среднее)
 
 Закодируйте `Pokemon` в компактный JSON-формат (для кеширования, не в формате PokeAPI).
 
@@ -868,7 +686,7 @@ pub fn pokemon_to_json(pokemon: Pokemon) -> json.Json
 
 **Подсказка:** используйте `json.object`, `json.string`, `json.int`, `json.array`.
 
-### 5. search_results_decoder — пагинированный список (Среднее)
+### 4. search_results_decoder — пагинированный список (Среднее)
 
 Декодируйте ответ PokeAPI для списка покемонов с пагинацией.
 
@@ -893,7 +711,7 @@ pub fn decode_search_results(json_str: String) -> Result(SearchResults, Nil)
 
 **Подсказка:** используйте `decode.optional(decode.string)` для nullable-полей. Это **не** `decode.optional_field` — поле всегда присутствует, но его значение может быть `null`.
 
-### 6. DamageMultiplier — фантомные типы (Среднее-Сложное)
+### 5. DamageMultiplier — фантомные типы (Среднее-Сложное)
 
 Реализуйте типобезопасный множитель урона с фантомными типами `Physical` / `Special`. Компилятор не позволит перемножить физический и специальный множители.
 
@@ -914,7 +732,7 @@ pub fn apply_damage(base: Int, m: DamageMultiplier(a)) -> Int
 
 **Примеры:**
 
-```
+```text
 physical(1.5) |> result.unwrap(..) |> multiplier_value == 1.5
 physical(-0.5) |> result.is_error == True
 // combine умножает два множителя:
@@ -926,7 +744,7 @@ apply_damage(100, physical(1.5)) == 150
 
 Фантомный тип не позволяет перемножить физический и специальный множители, а `combine` соединяет два множителя одной категории, перемножая их значения.
 
-### 7. format_pokemon_card — CLI-вывод (Среднее)
+### 6. format_pokemon_card — CLI-вывод (Среднее)
 
 Отформатируйте покемона для красивого вывода в CLI.
 
@@ -937,7 +755,7 @@ pub fn format_stat_bar(stat: PokemonStat) -> String
 
 **format_pokemon_card** возвращает:
 
-```
+```text
 #025 Pikachu
 Тип: electric
 Способности: static, lightning-rod
@@ -948,7 +766,7 @@ pub fn format_stat_bar(stat: PokemonStat) -> String
 
 **format_stat_bar** возвращает:
 
-```
+```text
 hp              [##.............] 35
 ```
 
@@ -959,7 +777,7 @@ hp              [##.............] 35
 
 **Подсказка:** для zero-padding используйте `string.repeat("0", pad) <> int.to_string(id)`.
 
-### 8. build_pokedex_entry — ROP-цепочка (Сложное)
+### 7. build_pokedex_entry — ROP-цепочка (Сложное)
 
 Постройте полный конвейер: JSON-строка → покемон → валидация → отформатированная карточка.
 
@@ -975,6 +793,7 @@ pub fn build_pokedex_entry(json_str: String) -> Result(String, PokedexError)
 ```
 
 Цепочка (используйте `result.try`):
+
 1. Распарсить JSON в `Pokemon` → ошибка `InvalidJson`
 2. Проверить `id` в диапазоне 1–1025 → ошибка `InvalidPokemonId`
 3. Проверить `types` не пуст → ошибка `MissingTypes`
@@ -983,26 +802,24 @@ pub fn build_pokedex_entry(json_str: String) -> Result(String, PokedexError)
 
 **Примеры:**
 
-```
+```text
 build_pokedex_entry(pikachu_json) |> result.is_ok == True
 build_pokedex_entry("not json") == Error(InvalidJson)
 build_pokedex_entry(pokemon_with_id_99999) == Error(InvalidPokemonId)
 ```
 
-**Подсказка:** каждый шаг — `use _ <- result.try(...)`, как в примере с `validate_and_parse_config`.
+**Подсказка:** каждый шаг — `use _ <- result.try(...)`, как в примере с `parse_valid_user`.
 
 ## Заключение
 
-В этой главе мы изучили:
+В этой главе мы изучили фундаментальные принципы типобезопасного программирования в Gleam:
 
-- **External functions** — вызов Erlang и JavaScript из Gleam через `@external`
-- **External types** — работа с типами из других языков
-- **gleam_erlang** — атомы, переменные окружения, charlist
-- **Parse, Don't Validate** — парсинг вместо валидации
-- **Opaque types** — сокрытие реализации и поддержание инвариантов
+- **Parse, Don't Validate** — превращение проверок в гарантии типов
+- **Opaque types и smart constructors** — сокрытие реализации и поддержание инвариантов
 - **Phantom types** — безопасность на уровне типов без накладных расходов
-- **gleam_json** — кодирование и декодирование JSON
-- **gleam/dynamic/decode** — типобезопасные декодеры
-- **ROP на практике** — композиция парсинга, декодирования и валидации
+- **gleam_json и gleam/dynamic/decode** — типобезопасная работа с JSON
+- **Railway-Oriented Programming** — композиция парсинга, декодирования и валидации
 
-В следующей главе мы погрузимся в процессы BEAM, акторы и OTP — уникальную модель конкурентности, которая делает Gleam особенным языком.
+Эти паттерны — основа надёжных систем. Компилятор становится союзником: он не даст передать невалидный email, сложить доллары с евро или опубликовать непроверенный документ.
+
+В следующих главах мы изучим, как взаимодействовать с Erlang и JavaScript платформами через FFI, расширяя возможности Gleam за счёт богатых экосистем обеих платформ.

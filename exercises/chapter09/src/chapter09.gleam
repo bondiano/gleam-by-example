@@ -1,71 +1,72 @@
-import gleam/dynamic/decode
-import gleam/int
-import gleam/json
-import gleam/list
-import gleam/result
-import gleam/string
+import gleam/dynamic.{type Dynamic}
+import gleam/javascript/promise.{type Promise}
 
 // ============================================================
-// Пример: функции для unit-тестирования
+// Примеры FFI для JavaScript
 // ============================================================
 
-/// Сортирует список целых чисел
-pub fn sort(xs: List(Int)) -> List(Int) {
-  list.sort(xs, int.compare)
-}
+/// Пример: получение текущего времени в миллисекундах
+@external(javascript, "./chapter09_ffi.mjs", "getCurrentTime")
+pub fn get_current_time() -> Int
 
-/// Проверяет, содержит ли список дубликаты
-pub fn has_duplicates(xs: List(a)) -> Bool {
-  case xs {
-    [] -> False
-    [first, ..rest] ->
-      case list.contains(rest, first) {
-        True -> True
-        False -> has_duplicates(rest)
-      }
-  }
-}
+/// Пример: логирование в консоль
+@external(javascript, "./chapter09_ffi.mjs", "consoleLog")
+pub fn console_log(message: String) -> Nil
 
-// ============================================================
-// Пример: функции для snapshot-тестирования
-// ============================================================
+/// Пример: работа с localStorage
+@external(javascript, "./chapter09_ffi.mjs", "localStorageGet")
+pub fn local_storage_get(key: String) -> Result(String, Nil)
 
-/// Форматирует таблицу с заголовками и строками
-pub fn format_table(
-  headers: List(String),
-  rows: List(List(String)),
-) -> String {
-  let header_line = string.join(headers, " | ")
-  let separator = string.repeat("-", string.length(header_line))
-  let data_lines =
-    rows
-    |> list.map(fn(row) { string.join(row, " | ") })
-    |> string.join("\n")
-  header_line <> "\n" <> separator <> "\n" <> data_lines
-}
+@external(javascript, "./chapter09_ffi.mjs", "localStorageSet")
+pub fn local_storage_set(key: String, value: String) -> Result(Nil, String)
 
-// ============================================================
-// Пример: JSON encode/decode для roundtrip-тестирования
-// ============================================================
+/// Пример: setTimeout
+pub type TimeoutId
 
-/// Кодирует список Int в JSON-строку
-pub fn encode_int_list(xs: List(Int)) -> String {
-  xs
-  |> json.array(json.int)
-  |> json.to_string
-}
+@external(javascript, "./chapter09_ffi.mjs", "setTimeout")
+pub fn set_timeout(callback: fn() -> Nil, delay: Int) -> TimeoutId
 
-/// Декодирует JSON-строку в список Int
-pub fn decode_int_list(s: String) -> Result(List(Int), Nil) {
-  json.parse(s, decode.list(decode.int))
-  |> result.map_error(fn(_) { Nil })
-}
+@external(javascript, "./chapter09_ffi.mjs", "clearTimeout")
+pub fn clear_timeout(id: TimeoutId) -> Nil
 
-// ============================================================
-// Пример: функция для PBT
-// ============================================================
+/// Пример: fetch API
+@external(javascript, "./chapter09_ffi.mjs", "fetchText")
+pub fn fetch_text(url: String) -> Promise(Result(String, String))
 
-/// Ограничивает значение диапазоном [lo, hi]
-pub fn clamp(value: Int, lo: Int, hi: Int) -> Int {
-  int.min(hi, int.max(lo, value))
-}
+/// Пример: работа с DOM
+pub type Element
+
+@external(javascript, "./chapter09_ffi.mjs", "querySelector")
+pub fn query_selector(selector: String) -> Result(Element, Nil)
+
+@external(javascript, "./chapter09_ffi.mjs", "querySelectorAll")
+pub fn query_selector_all(selector: String) -> List(Element)
+
+@external(javascript, "./chapter09_ffi.mjs", "setInnerText")
+pub fn set_inner_text(element: Element, text: String) -> Nil
+
+@external(javascript, "./chapter09_ffi.mjs", "getInnerText")
+pub fn get_inner_text(element: Element) -> String
+
+/// Пример: события
+pub type Event
+
+@external(javascript, "./chapter09_ffi.mjs", "addEventListener")
+pub fn add_event_listener(
+  element: Element,
+  event: String,
+  handler: fn(Event) -> Nil,
+) -> Nil
+
+@external(javascript, "./chapter09_ffi.mjs", "eventTargetValue")
+pub fn event_target_value(event: Event) -> Result(String, Nil)
+
+/// Пример: JSON.parse с обработкой ошибок
+@external(javascript, "./chapter09_ffi.mjs", "jsonParseSafe")
+pub fn json_parse_safe(json_str: String) -> Result(Dynamic, String)
+
+/// Пример: двойной FFI (работает и на Erlang, и на JavaScript)
+/// На Erlang использует os:system_time/0, на JS — Date.now()
+@external(erlang, "os", "system_time")
+@external(javascript, "./chapter09_ffi.mjs", "systemTimeMillis")
+pub fn system_time_millis() -> Int

@@ -70,9 +70,7 @@ pub type FormError {
 }
 
 /// Пример: валидация с накоплением ошибок
-pub fn validate_all(
-  validations: List(Result(Nil, e)),
-) -> Result(Nil, List(e)) {
+pub fn validate_all(validations: List(Result(Nil, e))) -> Result(Nil, List(e)) {
   let #(_, errors) = result.partition(validations)
   case errors {
     [] -> Ok(Nil)

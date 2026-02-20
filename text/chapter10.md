@@ -1,888 +1,1131 @@
-# Веб-разработка с Wisp
+# Процессы и OTP
 
-> REST API, типобезопасные маршруты и PostgreSQL — всё в одном проекте.
+> «Сделайте так, чтобы всё было процессом» — Джо Армстронг, создатель Erlang
+
+<!-- toc -->
 
 ## Цели главы
 
 В этой главе мы:
 
-- Познакомимся с Wisp — практичным веб-фреймворком для Gleam
-- Научимся строить маршруты через pattern matching (без DSL)
-- Разберём middleware-цепочки через `use`-выражения
-- Изучим работу с JSON в HTTP-запросах и ответах
-- Поймём, как подключить PostgreSQL через `pog`
-- Познакомимся со Squirrel — type-safe codegen для SQL
-- Построим полноценный TODO API с CRUD-операциями
+- Поймём модель акторов — фундамент конкурентности на BEAM
+- Научимся создавать процессы и обмениваться сообщениями
+- Освоим `Subject` и `Selector` для типобезопасной коммуникации
+- Изучим акторы (`gleam/otp/actor`) — основную абстракцию OTP
+- Разберём паттерн запрос-ответ (`actor.call`)
+- Познакомимся с мониторингом и связыванием процессов
+- Узнаем про супервизоры и стратегии перезапуска
+- Прочувствуем философию «Let it crash»
 
-## Стек: Wisp + Mist + pog
+## Модель акторов
 
-Веб-стек Gleam строится из трёх независимых слоёв:
+Модель акторов — концептуальная модель конкурентных вычислений, предложенная Карлом Хьюиттом в 1973 году. Это не абстрактная теория — именно она лежит в основе Erlang, Elixir и Gleam.
 
-| Слой | Библиотека | Роль |
-|------|-----------|------|
-| HTTP-сервер | `mist` | TCP/HTTP-транспорт |
-| Веб-фреймворк | `wisp` | Маршруты, middleware, запросы/ответы |
-| База данных | `pog` | PostgreSQL-клиент |
-| SQL codegen | `squirrel` | Type-safe SQL из `.sql` файлов |
+### Что такое актор?
 
-Такое разделение обязанностей позволяет использовать каждый компонент независимо. Wisp работает с любым HTTP-сервером, совместимым с интерфейсом `gleam_http`.
+**Актор** — примитивная единица вычислений. Каждый актор:
 
-Добавьте зависимости в `gleam.toml`:
+- Имеет **собственное приватное состояние** — никто другой не может его прочитать или изменить напрямую
+- Имеет **почтовый ящик (mailbox)** — очередь входящих сообщений
+- Обрабатывает сообщения **по одному, последовательно**
 
-```toml
-[dependencies]
-gleam_stdlib = ">= 0.44.0 and < 2.0.0"
-gleam_erlang = ">= 0.34.0 and < 2.0.0"
-gleam_http = ">= 3.0.0 and < 5.0.0"
-gleam_json = ">= 2.0.0 and < 4.0.0"
-wisp = ">= 1.0.0 and < 4.0.0"
-mist = ">= 4.0.0 and < 6.0.0"
-pog = ">= 1.0.0 and < 2.0.0"
-```
+Когда актор получает сообщение, он может выполнить **три действия**:
 
-`wisp` — фреймворк, `mist` — HTTP-сервер, `pog` — PostgreSQL-драйвер, `gleam_http` и `gleam_json` — работа с HTTP-типами и JSON.
+1. **Создать новых акторов** — породить дочерние процессы
+2. **Отправить сообщения** другим акторам
+3. **Изменить своё состояние** — определить, как обрабатывать следующее сообщение
 
-## Первый обработчик
+### Ключевые свойства
 
-Wisp строится вокруг функции-обработчика с сигнатурой `fn(Request) -> Response`:
+**Изоляция.** Акторы не имеют общей памяти. Единственный способ взаимодействия — отправка сообщений. Это устраняет целые классы ошибок: гонки данных (data races), мёртвые блокировки (deadlocks), нужду в мьютексах и семафорах.
 
-```gleam
-import wisp
+**Асинхронность.** Отправка сообщения — неблокирующая операция. Отправитель не ждёт, пока получатель обработает сообщение. Сообщение попадает в mailbox и ждёт своей очереди.
 
-pub fn hello_handler(req: wisp.Request) -> wisp.Response {
-  wisp.ok()
-  |> wisp.string_body("Hello, Gleam!")
-}
-```
+**Последовательная обработка.** Хотя миллионы акторов работают параллельно, каждый конкретный актор обрабатывает сообщения строго по порядку. Внутри актора нет конкурентности — это упрощает рассуждения о корректности.
 
-Запустим сервер через Mist:
+**Отказоустойчивость.** Если актор упал — ничего страшного. Его состояние изолировано, другие акторы не пострадали. Специальный актор-*супервизор* заметит падение и перезапустит упавшего.
+
+### Аналогия: почтовая служба
+
+Представьте, что каждый актор — это сотрудник в офисе с персональным почтовым ящиком. Сотрудники не ходят друг к другу за стол — они кладут записки в почтовый ящик получателя. Каждый сотрудник проверяет свой ящик и обрабатывает записки по одной. Если сотрудник заболел (упал), менеджер (супервизор) нанимает нового и ставит на то же место.
+
+## BEAM: виртуальная машина для конкурентности
+
+BEAM (Bogdan/Björn's Erlang Abstract Machine) — виртуальная машина, на которой работает Gleam (при компиляции в Erlang-таргет). BEAM была создана Ericsson в 1998 году и с тех пор используется в телекоммуникациях, мессенджерах (WhatsApp, Discord) и системах реального времени.
+
+### Процессы BEAM
+
+Процессы BEAM — это **не** потоки операционной системы. Это чрезвычайно легковесные сущности:
+
+| Характеристика | Процессы BEAM | Потоки ОС |
+| ---------------- | --------------- | ----------- |
+| Начальный размер | ~300 байт | ~1 МБ стека |
+| Количество | миллионы | тысячи |
+| Создание | микросекунды | миллисекунды |
+| Планировщик | BEAM (вытесняющий) | ОС |
+| Изоляция памяти | полная (свой heap) | общая память |
+| GC | per-process (не stop-the-world) | общий |
+
+### Вытесняющая многозадачность
+
+BEAM использует **вытесняющую** (preemptive) многозадачность. Каждому процессу выделяется квота «редукций» (~4000 операций). Когда квота израсходована, планировщик переключается на другой процесс. Это гарантирует:
+
+- **Ни один процесс не может заблокировать систему** — даже бесконечный цикл не остановит другие процессы
+- **Soft real-time** — время отклика предсказуемо
+- **Справедливость** — все процессы получают процессорное время
+
+### Распределённость
+
+Процессы BEAM могут общаться не только внутри одной машины, но и через сеть. BEAM поддерживает кластеры узлов (nodes), где процесс на узле A может отправить сообщение процессу на узле B так же просто, как локальному. Для этого используется модуль `gleam/erlang/node`.
+
+## Процессы в Gleam
+
+Gleam предоставляет типобезопасные обёртки над процессами BEAM через модуль `gleam/erlang/process`.
+
+### Subject — типизированный канал
+
+`Subject(message)` — ключевой тип для коммуникации между процессами. Subject — это типизированный канал, через который можно **отправлять** и **получать** сообщения определённого типа.
 
 ```gleam
 import gleam/erlang/process
-import mist
-import wisp
-import wisp/wisp_mist
 
 pub fn main() {
-  wisp.configure_logger()
+  // Создаём Subject для строковых сообщений
+  let subject: process.Subject(String) = process.new_subject()
 
-  let assert Ok(_) =
-    wisp_mist.handler(hello_handler, "secret_key_base_here")
-    |> mist.new
-    |> mist.port(8080)
-    |> mist.start_http
+  // Отправляем сообщение
+  process.send(subject, "привет!")
 
-  process.sleep_forever()
+  // Получаем сообщение (таймаут 1000 мс)
+  let assert Ok(message) = process.receive(subject, 1000)
+  // message == "привет!"
 }
 ```
 
-`wisp.configure_logger()` настраивает структурированный логгер — рекомендуется вызывать в начале программы.
+Важные свойства Subject:
 
-## Маршрутизация через pattern matching
+- **Типизированный** — `Subject(String)` принимает только строки, `Subject(Int)` — только числа
+- **Принадлежит процессу** — каждый Subject «принадлежит» процессу, который его создал. Только этот процесс может *получать* из него сообщения
+- **Передаваемый** — Subject можно передать другому процессу, чтобы тот мог *отправлять* в него сообщения
 
-В Wisp нет DSL для маршрутов — используется обычный `case` по результату `wisp.path_segments`:
+### Создание процессов
 
-```gleam
-pub fn router(req: wisp.Request) -> wisp.Response {
-  case wisp.path_segments(req) {
-    // GET /
-    [] -> home_page(req)
-
-    // /api/todos (GET или POST)
-    ["api", "todos"] -> todos_resource(req)
-
-    // /api/todos/:id (GET, PUT, DELETE)
-    ["api", "todos", id] -> todo_resource(req, id)
-
-    // /health
-    ["health"] -> health_check(req)
-
-    // всё остальное — 404
-    _ -> wisp.not_found()
-  }
-}
-```
-
-Для разделения методов используется `req.method`:
+Для создания нового процесса используется `process.start`:
 
 ```gleam
-import gleam/http
-
-pub fn todos_resource(req: wisp.Request) -> wisp.Response {
-  case req.method {
-    http.Get -> list_todos(req)
-    http.Post -> create_todo(req)
-    _ -> wisp.method_not_allowed([http.Get, http.Post])
-  }
-}
-```
-
-Это стандартный Gleam: никакой магии, никакого отражения — только pattern matching.
-
-## Middleware через use-выражения
-
-Wisp middleware — это функции вида `fn(handler) -> Response`. Они отлично сочетаются с `use`:
-
-```gleam
-pub fn handle_request(req: wisp.Request) -> wisp.Response {
-  // Логирует запрос
-  use <- wisp.log_request(req)
-  // Оборачивает крэш в 500-ответ
-  use <- wisp.rescue_crashes
-  // Обрабатывает HEAD как GET (стандартное поведение HTTP)
-  use req <- wisp.handle_head(req)
-
-  router(req)
-}
-```
-
-Каждый `use <-` добавляет слой обработки. Выполнение идёт сверху вниз при входящем запросе и снизу вверх при формировании ответа — ровно как в традиционных middleware-стеках.
-
-### Статические файлы
-
-```gleam
-use <- wisp.serve_static(req, under: "/static", from: priv_directory)
-```
-
-Wisp проверяет, соответствует ли путь запроса `under` — и если да, возвращает файл из `from`-директории, не доходя до роутера. Если нет — выполнение продолжается дальше.
-
-### Ограничение размера тела
-
-```gleam
-use <- wisp.require_content_type(req, "application/json")
-```
-
-Если заголовок `Content-Type` не совпадает с ожидаемым, Wisp автоматически вернёт `415 Unsupported Media Type`. Это защищает обработчики от неожиданных форматов до того, как они начнут читать тело запроса.
-
-## Разбор тела запроса
-
-### JSON
-
-```gleam
-import gleam/dynamic/decode
-import gleam/json
-
-pub type CreateTodoInput {
-  CreateTodoInput(title: String, completed: Bool)
-}
-
-fn create_todo_input_decoder() {
-  use title <- decode.field("title", decode.string)
-  use completed <- decode.field("completed", decode.bool)
-  decode.success(CreateTodoInput(title:, completed:))
-}
-
-pub fn create_todo(req: wisp.Request) -> wisp.Response {
-  use json_body <- wisp.require_json(req)
-
-  case json.parse_bits(json_body, create_todo_input_decoder()) {
-    Error(_) -> wisp.unprocessable_entity()
-    Ok(input) -> {
-      // ... сохранить в БД и вернуть ответ
-      let response_json = json.object([
-        #("title", json.string(input.title)),
-        #("completed", json.bool(input.completed)),
-      ])
-      wisp.created()
-      |> wisp.json_response(json.to_string(response_json), 201)
-    }
-  }
-}
-```
-
-`wisp.require_json` читает тело и проверяет Content-Type. Если тело не JSON — автоматически возвращает 415 Unsupported Media Type.
-
-### Query-параметры
-
-```gleam
-import gleam/uri
-
-pub fn list_todos(req: wisp.Request) -> wisp.Response {
-  let params = wisp.get_query(req)
-  // params: List(#(String, String))
-
-  let page =
-    params
-    |> list.key_find("page")
-    |> result.try(int.parse)
-    |> result.unwrap(1)
-
-  // ... получить данные с пагинацией
-  todo
-}
-```
-
-`wisp.get_query` возвращает список пар `#(key, value)`. Цепочка `list.key_find` → `result.try(int.parse)` → `result.unwrap(1)` безопасно извлекает числовой параметр с дефолтным значением, не роняя запрос при невалидных данных.
-
-### Формы
-
-```gleam
-pub fn handle_form(req: wisp.Request) -> wisp.Response {
-  use form <- wisp.require_form(req)
-  // form.values: List(#(String, String))
-  // form.files: List(#(String, wisp.UploadedFile))
-
-  case list.key_find(form.values, "title") {
-    Ok(title) -> save_todo(title)
-    Error(_) -> wisp.bad_request()
-  }
-}
-```
-
-`wisp.require_form` декодирует как `application/x-www-form-urlencoded`, так и `multipart/form-data`. Загруженные файлы доступны через `form.files` с типом `wisp.UploadedFile`.
-
-## Формирование ответов
-
-Wisp предоставляет функции для всех стандартных HTTP-статусов:
-
-```gleam
-// 2xx
-wisp.ok()               // 200
-wisp.created()          // 201
-wisp.no_content()       // 204
-
-// 3xx
-wisp.redirect(to: "/login")  // 302
-
-// 4xx
-wisp.bad_request()           // 400
-wisp.not_found()             // 404
-wisp.method_not_allowed([http.Get, http.Post])  // 405
-wisp.unprocessable_entity()  // 422
-wisp.too_many_requests()     // 429
-
-// 5xx
-wisp.internal_server_error() // 500
-```
-
-Тело ответа задаётся через pipe:
-
-```gleam
-wisp.ok()
-|> wisp.string_body("Hello!")
-
-wisp.ok()
-|> wisp.html_body("<h1>Hello!</h1>")
-
-// JSON с явным статусом
-wisp.response(200)
-|> wisp.set_header("content-type", "application/json")
-|> wisp.string_body("{\"ok\":true}")
-
-// Удобный помощник для JSON
-wisp.json_response(json_string, 200)
-```
-
-`wisp.json_response` — сокращение, которое одновременно устанавливает статус, заголовок `content-type: application/json` и тело. Все остальные методы можно комбинировать через pipe: сначала выбрать статус (`wisp.ok()`, `wisp.response(200)`), затем добавить тело.
-
-## Контекст приложения
-
-В реальных приложениях обработчикам нужны общие ресурсы: подключение к БД, настройки, кэши. Стандартный паттерн в Wisp — передавать контекст явно:
-
-```gleam
-pub type Context {
-  Context(db: pog.Connection)
-}
-
-pub fn router(req: wisp.Request, ctx: Context) -> wisp.Response {
-  case wisp.path_segments(req) {
-    ["api", "todos"] -> todos_resource(req, ctx)
-    _ -> wisp.not_found()
-  }
-}
-```
-
-А при запуске сервера используем замыкание:
-
-```gleam
-pub fn main() {
-  let db = connect_db()
-  let ctx = Context(db:)
-
-  let assert Ok(_) =
-    fn(req) { handle_request(req, ctx) }
-    |> wisp_mist.handler("secret_key_base")
-    |> mist.new
-    |> mist.port(8080)
-    |> mist.start_http
-
-  process.sleep_forever()
-}
-```
-
-Замыкание `fn(req) { handle_request(req, ctx) }` — ключевой паттерн: Mist требует функцию `fn(Request) -> Response`, а Wisp-обработчик принимает дополнительный аргумент `ctx`. Замыкание захватывает `ctx` и превращает двуаргументную функцию в одноаргументную. `process.sleep_forever()` не даёт процессу завершиться — сервер работает, пока запущены порождённые им акторы.
-
-## ETS — встроенная in-memory база данных BEAM
-
-До того как подключать PostgreSQL, стоит познакомиться с ETS (Erlang Term Storage) — таблицами, встроенными прямо в BEAM. Это классическая точка входа в экосистему Erlang.
-
-| Свойство | ETS | PostgreSQL (pog) |
-|----------|-----|-----------------|
-| Хранение | Оперативная память | Диск |
-| Скорость чтения по ключу | O(1) | ~1–5 мс |
-| Выживает после рестарта | Нет | Да |
-| SQL, транзакции | Нет | Да |
-| Сложность запуска | Нулевая | Нужен сервер БД |
-
-ETS идеален для: кэша, хранилища сессий, счётчиков, rate limiting, временных данных.
-
-### ETS через @external FFI
-
-Gleam вызывает Erlang-функции через `@external`. ETS хранит **кортежи** — в Gleam они записываются как `#(a, b, c)` и компилируются в Erlang tuples `{a, b, c}`. Первый элемент — ключ.
-
-```gleam
-import gleam/dynamic.{type Dynamic}
-import gleam/erlang/atom.{type Atom}
-
-// ets:new(Name, Options) — создаёт таблицу, возвращает имя-атом
-@external(erlang, "ets", "new")
-fn ets_new(name: Atom, options: List(Dynamic)) -> Atom
-
-// ets:insert(Table, {Key, Field1, Field2}) — вставляет/обновляет запись
-@external(erlang, "ets", "insert")
-fn ets_insert(table: Atom, record: #(String, String, Bool)) -> Bool
-
-// ets:lookup(Table, Key) — O(1) поиск по ключу
-@external(erlang, "ets", "lookup")
-fn ets_lookup(table: Atom, key: String) -> List(#(String, String, Bool))
-
-// ets:tab2list(Table) — все записи
-@external(erlang, "ets", "tab2list")
-fn ets_tab2list(table: Atom) -> List(#(String, String, Bool))
-
-// ets:delete(Table, Key) — удалить по ключу
-@external(erlang, "ets", "delete")
-fn ets_delete_key(table: Atom, key: String) -> Bool
-```
-
-### Атомы как идентификаторы
-
-Опции `ets:new` — атомы Erlang. В Gleam атомы создаются через `atom.create/1`:
-
-```gleam
-pub fn create_store(name: String) -> Atom {
-  let table_name = atom.create(name)
-  // set         — один ключ = одна запись
-  // public      — чтение/запись из любого процесса
-  // named_table — доступна по имени без ссылки
-  let options = [
-    atom.to_dynamic(atom.create("set")),
-    atom.to_dynamic(atom.create("public")),
-    atom.to_dynamic(atom.create("named_table")),
-  ]
-  ets_new(table_name, options)
-}
-```
-
-> Атомы в BEAM никогда не уничтожаются GC. Лимит ~1 миллион. Создавайте
-> только константы, никогда — из пользовательского ввода.
-
-### CRUD поверх ETS
-
-```gleam
-pub type Todo {
-  Todo(id: String, title: String, completed: Bool)
-}
-
-pub fn insert_todo(table: Atom, title: String) -> Todo {
-  let id = wisp.random_string(8)
-  // Кортеж #(id, title, False) сохраняется как Erlang tuple {id, title, false}
-  ets_insert(table, #(id, title, False))
-  Todo(id:, title:, completed: False)
-}
-
-pub fn find_todo(table: Atom, id: String) -> option.Option(Todo) {
-  case ets_lookup(table, id) {
-    [#(i, title, completed)] -> option.Some(Todo(id: i, title:, completed:))
-    _ -> option.None
-  }
-}
-
-pub fn list_all(table: Atom) -> List(Todo) {
-  ets_tab2list(table)
-  |> list.map(fn(row) { Todo(id: row.0, title: row.1, completed: row.2) })
-}
-```
-
-ETS-таблица создаётся один раз при старте и передаётся в контексте:
-
-```gleam
-pub type Context {
-  Context(table: Atom)
-}
+import gleam/erlang/process
+import gleam/io
 
 pub fn main() {
-  let table = create_store("todos")
-  let ctx = Context(table:)
+  // Создаём Subject для получения результата
+  let subject = process.new_subject()
 
-  let assert Ok(_) =
-    fn(req) { middleware(req, router(_, ctx)) }
-    |> wisp_mist.handler(wisp.random_string(64))
-    |> mist.new
-    |> mist.port(8080)
-    |> mist.start
+  // Запускаем новый процесс
+  // Второй аргумент: True = связанный (linked) процесс
+  process.start(fn() {
+    // Этот код выполняется в ДРУГОМ процессе
+    let result = expensive_computation()
+    process.send(subject, result)
+  }, True)
 
-  process.sleep_forever()
+  // Ждём результат в текущем процессе
+  let assert Ok(result) = process.receive(subject, 5000)
+  io.println("Результат: " <> result)
+}
+
+fn expensive_computation() -> String {
+  process.sleep(100)  // Имитация долгой работы
+  "42"
 }
 ```
 
-Полная рабочая реализация — в `exercises/chapter10/src/chapter10.gleam`.
+Здесь `process.start(fn, linked)` создаёт новый процесс, который выполняет переданную функцию. Второй аргумент определяет, будет ли новый процесс **связан** с родительским (подробнее о связывании — ниже).
 
-## pog — PostgreSQL-клиент
+### Пример: параллельные вычисления
 
-`pog` — идиоматический PostgreSQL-клиент для Gleam:
+Запустим несколько процессов одновременно и соберём результаты:
 
 ```gleam
-import pog
-
-pub fn connect() -> pog.Connection {
-  pog.default_config()
-  |> pog.host("localhost")
-  |> pog.port(5432)
-  |> pog.database("gleam_todos")
-  |> pog.user("postgres")
-  |> pog.password(option.Some("password"))
-  |> pog.connect
-}
-```
-
-`pog` использует builder-паттерн: `pog.default_config()` создаёт конфиг с разумными значениями по умолчанию (localhost:5432), а pipe-цепочка переопределяет нужные параметры. `pog.connect` запускает пул соединений — возвращаемый `pog.Connection` потокобезопасен и предназначен для переиспользования.
-
-### Запросы вручную
-
-```gleam
-pub fn get_todo(db: pog.Connection, id: Int) -> Result(Todo, pog.QueryError) {
-  let sql = "SELECT id, title, completed FROM todos WHERE id = $1"
-
-  use response <- result.try(
-    pog.query(sql)
-    |> pog.parameter(pog.int(id))
-    |> pog.returning({
-      use id <- decode.field(0, decode.int)
-      use title <- decode.field(1, decode.string)
-      use completed <- decode.field(2, decode.bool)
-      decode.success(Todo(id:, title:, completed:))
-    })
-    |> pog.execute(db),
-  )
-
-  case response.rows {
-    [todo] -> Ok(todo)
-    [] -> Error(pog.UnexpectedResultCount(expected: 1, got: 0))
-    _ -> Error(pog.UnexpectedResultCount(expected: 1, got: list.length(response.rows)))
-  }
-}
-```
-
-Запрос строится через pipe: `pog.query(sql)` задаёт SQL, `pog.parameter` добавляет типизированные параметры (защита от SQL-инъекций), `pog.returning` задаёт декодер для строк результата, `pog.execute(db)` выполняет запрос. Результат `response.rows` — список декодированных строк; мы ожидаем ровно одну.
-
-### Вставка
-
-```gleam
-pub fn create_todo(
-  db: pog.Connection,
-  title: String,
-) -> Result(Todo, pog.QueryError) {
-  let sql =
-    "INSERT INTO todos (title, completed) VALUES ($1, false) RETURNING id, title, completed"
-
-  use response <- result.try(
-    pog.query(sql)
-    |> pog.parameter(pog.text(title))
-    |> pog.returning(todo_decoder())
-    |> pog.execute(db),
-  )
-
-  case response.rows {
-    [todo] -> Ok(todo)
-    _ -> Error(pog.UnexpectedResultCount(expected: 1, got: 0))
-  }
-}
-```
-
-`RETURNING` в SQL позволяет сразу получить вставленную строку — не нужен отдельный `SELECT`. Тот же паттерн используется для `UPDATE ... RETURNING`: вместо двух запросов один возвращает изменённые данные.
-
-## Squirrel — type-safe SQL
-
-Писать SQL в строках — источник ошибок: опечатки не проверяются компилятором, типы колонок нужно указывать вручную. Squirrel решает это.
-
-### Как работает Squirrel
-
-1. Создаёте `.sql` файлы в `src/<module>/sql/`
-2. Запускаете `gleam run -m squirrel`
-3. Squirrel подключается к БД, проверяет запросы и генерирует типизированные функции
-
-```
-src/
-└── app/
-    ├── sql/
-    │   ├── list_todos.sql
-    │   ├── get_todo.sql
-    │   ├── create_todo.sql
-    │   └── delete_todo.sql
-    └── sql.gleam        ← сгенерированный файл
-```
-
-SQL-файлы — единственное место, где пишется SQL вручную. Squirrel читает схему БД, проверяет типы параметров и колонок, после чего генерирует `sql.gleam` с типизированными функциями.
-
-### Пример SQL-файла
-
-```sql
--- src/app/sql/list_todos.sql
-SELECT id, title, completed
-FROM todos
-ORDER BY id ASC
-```
-
-После генерации получаем:
-
-```gleam
-// src/app/sql.gleam (сгенерировано автоматически)
-import gleam/dynamic/decode
-import pog
-
-pub type ListTodosRow {
-  ListTodosRow(id: Int, title: String, completed: Bool)
-}
-
-pub fn list_todos(db: pog.Connection) -> Result(List(ListTodosRow), pog.QueryError) {
-  let sql = "SELECT id, title, completed FROM todos ORDER BY id ASC"
-  // ... генерированный код
-}
-```
-
-Squirrel генерирует строго типизированный тип строки (`ListTodosRow`) и функцию с декодером — ошибки маппинга столбцов выявляются при регенерации, а не в рантайме.
-
-### Параметризованные запросы
-
-```sql
--- src/app/sql/get_todo.sql
-SELECT id, title, completed
-FROM todos
-WHERE id = $1
-```
-
-Squirrel видит тип `$1` из схемы БД и генерирует:
-
-```gleam
-pub fn get_todo(
-  db: pog.Connection,
-  id: Int,
-) -> Result(List(GetTodoRow), pog.QueryError)
-```
-
-Теперь передать строку вместо Int — ошибка компиляции.
-
-## Проект: TODO API
-
-Соберём всё вместе в полноценный REST API.
-
-### Структура проекта
-
-```
-src/
-├── app.gleam          ← точка входа
-├── router.gleam       ← маршрутизация
-├── context.gleam      ← тип Context
-├── handlers/
-│   └── todos.gleam    ← обработчики /api/todos
-└── sql/
-    ├── list_todos.sql
-    ├── get_todo.sql
-    ├── create_todo.sql
-    ├── update_todo.sql
-    └── delete_todo.sql
-```
-
-Разделение по слоям: `context.gleam` управляет зависимостями, `router.gleam` — маршрутизацией, `handlers/` — бизнес-логикой, `sql/` — запросами к БД. Каждый слой знает только о нижележащем.
-
-### context.gleam
-
-```gleam
-import pog
-
-pub type Context {
-  Context(db: pog.Connection)
-}
-
-pub fn new() -> Context {
-  let db =
-    pog.default_config()
-    |> pog.host("localhost")
-    |> pog.database("gleam_todos")
-    |> pog.connect
-
-  Context(db:)
-}
-```
-
-`context.new()` инициализирует пул соединений с БД при старте приложения. `Context` как тип позволяет передавать зависимости явно в каждый обработчик — без глобального состояния.
-
-### router.gleam
-
-```gleam
-import gleam/http
-import wisp
-import app/context.{type Context}
-import app/handlers/todos
-
-pub fn handle_request(req: wisp.Request, ctx: Context) -> wisp.Response {
-  use <- wisp.log_request(req)
-  use <- wisp.rescue_crashes
-  use req <- wisp.handle_head(req)
-
-  case wisp.path_segments(req) {
-    ["health"] -> wisp.json_response("{\"status\":\"ok\"}", 200)
-    ["api", "todos"] ->
-      case req.method {
-        http.Get -> todos.list(req, ctx)
-        http.Post -> todos.create(req, ctx)
-        _ -> wisp.method_not_allowed([http.Get, http.Post])
-      }
-    ["api", "todos", id] ->
-      case req.method {
-        http.Get -> todos.get(req, ctx, id)
-        http.Put -> todos.update(req, ctx, id)
-        http.Delete -> todos.delete(req, ctx, id)
-        _ -> wisp.method_not_allowed([http.Get, http.Put, http.Delete])
-      }
-    _ -> wisp.not_found()
-  }
-}
-```
-
-`wisp.log_request` и `wisp.rescue_crashes` — middleware, которые добавляются через `use <-`. `wisp.handle_head` автоматически обрабатывает HEAD-запросы как GET без тела ответа. Маршрутизация строится через `wisp.path_segments` и pattern matching.
-
-### handlers/todos.gleam
-
-```gleam
-import gleam/dynamic/decode
+import gleam/erlang/process
 import gleam/int
-import gleam/json
 import gleam/list
+
+pub fn parallel_sum(numbers: List(Int)) -> Int {
+  let subject = process.new_subject()
+
+  // Запускаем процесс для каждого числа
+  list.each(numbers, fn(n) {
+    process.start(fn() {
+      // Каждый процесс вычисляет квадрат
+      process.send(subject, n * n)
+    }, True)
+  })
+
+  // Собираем результаты
+  let length = list.length(numbers)
+  collect_results(subject, length, 0)
+}
+
+fn collect_results(
+  subject: process.Subject(Int),
+  remaining: Int,
+  acc: Int,
+) -> Int {
+  case remaining {
+    0 -> acc
+    _ -> {
+      let assert Ok(value) = process.receive(subject, 5000)
+      collect_results(subject, remaining - 1, acc + value)
+    }
+  }
+}
+```
+
+> **Важно:** порядок получения результатов **не гарантирован**. Процессы работают параллельно, и кто первый вычислит — тот первый отправит сообщение. Для суммы это не важно, но для упорядоченных результатов нужна дополнительная логика.
+
+### receive с таймаутом
+
+`process.receive(subject, timeout_ms)` возвращает `Result`:
+
+```gleam
+case process.receive(subject, 100) {
+  Ok(message) -> io.println("Получено: " <> message)
+  Error(Nil) -> io.println("Таймаут: сообщение не пришло за 100 мс")
+}
+```
+
+Таймаут в миллисекундах. Если сообщение не пришло за указанное время — возвращается `Error(Nil)`. Для бесконечного ожидания используйте `process.receive_forever(subject)`.
+
+## Selector — мультиплексирование сообщений
+
+Что если процесс ждёт сообщения из нескольких источников? Например, и от пользователя, и от таймера? Для этого есть `Selector`.
+
+`Selector(payload)` позволяет ждать сообщения от **нескольких** Subject одновременно, возвращая первое пришедшее:
+
+```gleam
+import gleam/erlang/process
+import gleam/int
+
+pub fn main() {
+  let string_subject = process.new_subject()
+  let int_subject = process.new_subject()
+
+  // Отправляем сообщения разных типов
+  process.send(int_subject, 42)
+  process.send(string_subject, "hello")
+
+  // Создаём Selector, который принимает оба типа → String
+  let selector =
+    process.new_selector()
+    |> process.select(string_subject)
+    |> process.select_map(int_subject, int.to_string)
+
+  // Получаем первое доступное сообщение
+  case process.selector_receive(selector, 100) {
+    Ok(value) -> value  // Строка — либо "hello", либо "42"
+    Error(Nil) -> "таймаут"
+  }
+}
+```
+
+Ключевые функции:
+
+- `process.new_selector()` — создаёт пустой селектор
+- `process.select(selector, subject)` — добавляет Subject (тип должен совпадать с payload)
+- `process.select_map(selector, subject, fn)` — добавляет Subject с преобразованием типа
+- `process.selector_receive(selector, timeout)` — ждёт сообщение из любого добавленного Subject
+- `process.merge_selector(a, b)` — объединяет два селектора
+
+Selector полезен, когда актор должен реагировать на разные типы событий: пользовательские сообщения, таймеры, сигналы от других процессов.
+
+## Паттерн запрос-ответ
+
+Часто нужен синхронный вызов: отправить запрос и дождаться ответа. Функция `process.call` реализует этот паттерн:
+
+```gleam
+import gleam/erlang/process
+
+pub fn main() {
+  let server = process.new_subject()
+
+  // Запускаем «сервер» в отдельном процессе
+  process.start(fn() { server_loop(server, 0) }, True)
+
+  // Синхронный вызов: отправляем запрос, ждём ответ
+  let count = process.call(server, 1000, fn(reply_to) {
+    GetCount(reply_to:)
+  })
+  // count == 0
+}
+
+pub type ServerMsg {
+  Increment
+  GetCount(reply_to: process.Subject(Int))
+}
+
+fn server_loop(
+  subject: process.Subject(ServerMsg),
+  state: Int,
+) -> Nil {
+  case process.receive_forever(subject) {
+    Increment -> server_loop(subject, state + 1)
+    GetCount(reply_to:) -> {
+      process.send(reply_to, state)
+      server_loop(subject, state)
+    }
+  }
+}
+```
+
+`process.call(subject, timeout, make_request)` делает три вещи:
+
+1. Создаёт временный Subject для ответа
+2. Вызывает `make_request(reply_subject)` и отправляет результат серверу
+3. Ждёт ответ на временном Subject
+
+Если ответ не пришёл за `timeout` миллисекунд — процесс падает (crash). Для более мягкой обработки таймаута используйте ручной `receive`.
+
+## Акторы — процессы с состоянием
+
+Паттерн «процесс + состояние + цикл обработки сообщений» настолько частый, что для него есть готовая абстракция — **актор** из `gleam/otp/actor`.
+
+### Зачем нужны акторы?
+
+Сравните ручной цикл обработки:
+
+```gleam
+// Ручная реализация — много шаблонного кода
+fn server_loop(subject, state) {
+  case process.receive_forever(subject) {
+    msg1 -> server_loop(subject, handle_msg1(state, msg1))
+    msg2 -> server_loop(subject, handle_msg2(state, msg2))
+  }
+}
+```
+
+И актор:
+
+```gleam
+// Актор — только логика обработки
+fn handle_message(state, message) {
+  case message {
+    msg1 -> actor.continue(handle_msg1(state, msg1))
+    msg2 -> actor.continue(handle_msg2(state, msg2))
+  }
+}
+```
+
+Актор берёт на себя:
+
+- Создание процесса и Subject
+- Цикл получения сообщений
+- Обработку инициализации
+- Интеграцию с OTP (супервизоры, hot reload)
+
+### Создание актора
+
+Актор создаётся через builder-паттерн:
+
+```gleam
+import gleam/erlang/process.{type Subject}
+import gleam/otp/actor
 import gleam/result
-import wisp
-import app/context.{type Context}
 
-pub type Todo {
-  Todo(id: Int, title: String, completed: Bool)
+pub type CounterMsg {
+  Increment
+  Decrement
+  GetCount(reply_to: Subject(Int))
 }
 
-fn todo_to_json(todo: Todo) -> json.Json {
-  json.object([
-    #("id", json.int(todo.id)),
-    #("title", json.string(todo.title)),
-    #("completed", json.bool(todo.completed)),
-  ])
-}
-
-pub fn list(_req: wisp.Request, ctx: Context) -> wisp.Response {
-  // Squirrel-генерированная функция
-  case sql.list_todos(ctx.db) {
-    Error(_) -> wisp.internal_server_error()
-    Ok(rows) -> {
-      let todos_json =
-        rows
-        |> list.map(fn(row) {
-          json.object([
-            #("id", json.int(row.id)),
-            #("title", json.string(row.title)),
-            #("completed", json.bool(row.completed)),
-          ])
-        })
-        |> json.array
-        |> json.to_string
-
-      wisp.json_response(todos_json, 200)
+fn handle_counter(state: Int, message: CounterMsg) -> actor.Next(Int, CounterMsg) {
+  case message {
+    Increment -> actor.continue(state + 1)
+    Decrement -> actor.continue(state - 1)
+    GetCount(reply_to) -> {
+      process.send(reply_to, state)
+      actor.continue(state)
     }
   }
 }
 
-pub fn create(req: wisp.Request, ctx: Context) -> wisp.Response {
-  use body <- wisp.require_json(req)
-
-  let decoder = {
-    use title <- decode.field("title", decode.string)
-    decode.success(title)
-  }
-
-  case json.parse_bits(body, decoder) {
-    Error(_) -> wisp.unprocessable_entity()
-    Ok(title) ->
-      case sql.create_todo(ctx.db, title) {
-        Error(_) -> wisp.internal_server_error()
-        Ok([row]) -> {
-          let response =
-            json.object([
-              #("id", json.int(row.id)),
-              #("title", json.string(row.title)),
-              #("completed", json.bool(row.completed)),
-            ])
-            |> json.to_string
-          wisp.json_response(response, 201)
-        }
-        Ok(_) -> wisp.internal_server_error()
-      }
-  }
+pub fn start_counter() -> Result(Subject(CounterMsg), actor.StartError) {
+  actor.new(0)                          // начальное состояние
+  |> actor.on_message(handle_counter)   // обработчик сообщений
+  |> actor.start                        // запуск процесса
+  |> result.map(fn(started) { started.data })  // извлекаем Subject
 }
 ```
 
-`list` возвращает массив JSON с кодом 200. `create` требует JSON-тело, декодирует поле `title` и возвращает созданный объект с кодом 201. При любой ошибке парсинга Wisp автоматически отвечает 422 Unprocessable Entity.
+Разберём по шагам:
 
-### app.gleam — точка входа
+1. **`actor.new(0)`** — создаёт builder с начальным состоянием `0`
+2. **`actor.on_message(handle_counter)`** — устанавливает функцию обработки. Сигнатура: `fn(state, message) -> actor.Next(state, message)`
+3. **`actor.start`** — запускает процесс, возвращает `Result(Started(data), StartError)`, где `data` — Subject для отправки сообщений актору
+4. **`result.map(fn(started) { started.data })`** — извлекаем Subject из `Started`
+
+### Обработка сообщений
+
+Функция-обработчик возвращает `actor.Next(state, message)`, указывая, что делать дальше:
+
+```gleam
+// Продолжить работу с новым состоянием
+actor.continue(new_state)
+
+// Остановить актор (нормальное завершение)
+actor.stop()
+
+// Остановить актор с ошибкой
+actor.stop_abnormal("причина ошибки")
+```
+
+В большинстве обработчиков используется `actor.continue` с обновлённым состоянием. `actor.stop()` — для планового завершения (задача выполнена, актор больше не нужен). `actor.stop_abnormal` — когда актор столкнулся с ситуацией, которую не может обработать: супервизор получит сигнал об аварийном завершении и перезапустит процесс.
+
+### actor.send — fire-and-forget
+
+Для отправки сообщения без ожидания ответа:
+
+```gleam
+pub fn main() {
+  let assert Ok(counter) = start_counter()
+
+  // Отправляем сообщения — не ждём ответа
+  actor.send(counter, Increment)
+  actor.send(counter, Increment)
+  actor.send(counter, Increment)
+  actor.send(counter, Decrement)
+}
+```
+
+`actor.send` — это просто псевдоним для `process.send`. Сообщение попадает в mailbox актора и будет обработано, когда до него дойдёт очередь.
+
+### actor.call — запрос с ответом
+
+Для синхронных запросов используйте `actor.call`:
+
+```gleam
+pub fn main() {
+  let assert Ok(counter) = start_counter()
+
+  actor.send(counter, Increment)
+  actor.send(counter, Increment)
+
+  // Синхронный запрос — ждём ответ (таймаут 1000 мс)
+  let count = actor.call(counter, waiting: 1000, sending: GetCount)
+  // count == 2
+}
+```
+
+`actor.call(subject, waiting: timeout, sending: make_message)` работает так:
+
+1. Создаёт временный Subject для ответа
+2. Вызывает `make_message(reply_subject)` — создаёт сообщение с каналом ответа
+3. Отправляет это сообщение актору
+4. Ждёт ответ
+
+Если конструктор сообщения принимает ровно один аргумент (Subject ответа), можно передать его напрямую:
+
+```gleam
+// Эквивалентные записи:
+actor.call(counter, waiting: 1000, sending: GetCount)
+actor.call(counter, waiting: 1000, sending: fn(reply) { GetCount(reply) })
+```
+
+Первый вариант работает, когда конструктор принимает ровно один аргумент типа `Subject` — тогда его можно передать напрямую. Второй вариант нужен, если конструктор принимает дополнительные поля: `fn(reply) { GetCount(reply_to: reply, extra: value) }`.
+
+### Полный пример: актор-стек
+
+```gleam
+import gleam/erlang/process.{type Subject}
+import gleam/otp/actor
+import gleam/result
+
+pub type StackMsg(a) {
+  Push(value: a)
+  Pop(reply_to: Subject(Result(a, Nil)))
+  Size(reply_to: Subject(Int))
+}
+
+fn handle_stack(
+  stack: List(a),
+  message: StackMsg(a),
+) -> actor.Next(List(a), StackMsg(a)) {
+  case message {
+    Push(value) -> actor.continue([value, ..stack])
+
+    Pop(reply_to) -> {
+      case stack {
+        [] -> {
+          process.send(reply_to, Error(Nil))
+          actor.continue([])
+        }
+        [top, ..rest] -> {
+          process.send(reply_to, Ok(top))
+          actor.continue(rest)
+        }
+      }
+    }
+
+    Size(reply_to) -> {
+      process.send(reply_to, list.length(stack))
+      actor.continue(stack)
+    }
+  }
+}
+
+pub fn start_stack() -> Result(Subject(StackMsg(a)), actor.StartError) {
+  actor.new([])
+  |> actor.on_message(handle_stack)
+  |> actor.start
+  |> result.map(fn(started) { started.data })
+}
+
+// Удобные обёртки
+pub fn push(stack: Subject(StackMsg(a)), value: a) -> Nil {
+  actor.send(stack, Push(value))
+}
+
+pub fn pop(stack: Subject(StackMsg(a))) -> Result(a, Nil) {
+  actor.call(stack, waiting: 1000, sending: Pop)
+}
+
+pub fn size(stack: Subject(StackMsg(a))) -> Int {
+  actor.call(stack, waiting: 1000, sending: Size)
+}
+```
+
+Обратите внимание на паттерн: **приватный тип сообщений + публичные обёртки**. Пользователь актора вызывает `push(stack, 42)`, а не `actor.send(stack, Push(42))`. Это скрывает детали протокола.
+
+### Именованные акторы
+
+По умолчанию для взаимодействия с актором нужен его Subject. Но иногда удобно обращаться к актору по **имени** — например, если это глобальный сервис (кеш, конфигурация, счётчик метрик).
 
 ```gleam
 import gleam/erlang/process
-import mist
-import wisp
-import wisp/wisp_mist
-import app/context
-import app/router
+import gleam/otp/actor
+
+pub fn start_named_counter(
+  name: process.Name(CounterMsg),
+) -> Result(Subject(CounterMsg), actor.StartError) {
+  actor.new(0)
+  |> actor.named(name)
+  |> actor.on_message(handle_counter)
+  |> actor.start
+  |> result.map(fn(started) { started.data })
+}
 
 pub fn main() {
-  wisp.configure_logger()
+  // Создаём уникальное имя
+  let counter_name = process.new_name("global_counter")
 
-  let ctx = context.new()
+  // Запускаем именованный актор
+  let assert Ok(_) = start_named_counter(counter_name)
 
-  let secret_key_base = "your_64_char_secret_key_here"
-
-  let assert Ok(_) =
-    fn(req) { router.handle_request(req, ctx) }
-    |> wisp_mist.handler(secret_key_base)
-    |> mist.new
-    |> mist.port(8080)
-    |> mist.start_http
-
-  process.sleep_forever()
+  // Получаем Subject по имени — из любого места программы
+  let subject = process.named_subject(counter_name)
+  actor.send(subject, Increment)
 }
 ```
 
-`context.new()` инициализирует зависимости, затем сервер монтируется через замыкание. `process.sleep_forever()` удерживает главный процесс — без него BEAM завершится сразу после старта сервера.
+Именованные акторы полезны, когда Subject нельзя передать напрямую — например, в распределённых системах или при интеграции с Erlang-кодом.
 
-### Создание схемы БД
+## Мониторинг и связывание
 
-```sql
-CREATE TABLE todos (
-  id        SERIAL PRIMARY KEY,
-  title     TEXT    NOT NULL,
-  completed BOOLEAN NOT NULL DEFAULT FALSE
-);
-```
+Что происходит, когда процесс падает? BEAM предоставляет два механизма обнаружения сбоев.
 
-`SERIAL PRIMARY KEY` автоматически генерирует уникальный `id` для каждой строки. `NOT NULL` гарантирует, что приложение не сохранит задачу без названия. `DEFAULT FALSE` позволяет не указывать `completed` при вставке.
+### link — связывание процессов
 
-## Переменные окружения
-
-В продакшене настройки берут из окружения:
+**Связывание** (link) создаёт двунаправленную связь между процессами. Если один из связанных процессов падает — второй тоже падает:
 
 ```gleam
-import gleam/erlang/os
+import gleam/erlang/process
 
-fn db_config() -> pog.Config {
-  let host = os.get_env("DB_HOST") |> result.unwrap("localhost")
-  let port =
-    os.get_env("DB_PORT")
-    |> result.try(int.parse)
-    |> result.unwrap(5432)
-  let name = os.get_env("DB_NAME") |> result.unwrap("todos")
+pub fn main() {
+  // process.start с True создаёт связанный процесс
+  let _pid = process.start(fn() {
+    process.sleep(100)
+    panic as "Я упал!"
+  }, True)  // True = linked
 
-  pog.default_config()
-  |> pog.host(host)
-  |> pog.port(port)
-  |> pog.database(name)
+  // Через 100 мс дочерний процесс упадёт,
+  // и текущий процесс тоже упадёт (они связаны)
+  process.sleep(200)
 }
 ```
 
-`os.get_env` возвращает `Result(String, Nil)` — если переменная не задана, `result.unwrap` подставляет дефолт. В продакшене следует использовать `result.try` или `let assert Ok(...)` для обязательных переменных.
+Связывание обеспечивает **домен отказа** (failure domain): группа связанных процессов либо все работают, либо все падают. Это полезно, когда процессы зависят друг от друга.
+
+### monitor — наблюдение за процессами
+
+**Мониторинг** — однонаправленное наблюдение. Наблюдатель получает сообщение о падении, но сам не падает:
+
+```gleam
+import gleam/erlang/process
+import gleam/io
+
+pub fn main() {
+  // Запускаем несвязанный процесс
+  let pid = process.start(fn() {
+    process.sleep(100)
+    panic as "Авария!"
+  }, False)  // False = unlinked
+
+  // Начинаем мониторинг
+  let monitor = process.monitor(pid)
+
+  // Создаём Selector для получения Down-сообщений
+  let selector =
+    process.new_selector()
+    |> process.select_specific_monitor(monitor, fn(down) { down })
+
+  // Ждём сообщение о падении
+  case process.selector_receive(selector, 500) {
+    Ok(_down) -> io.println("Процесс упал, но мы живы!")
+    Error(Nil) -> io.println("Таймаут")
+  }
+}
+```
+
+Мониторинг полезен, когда нужно **реагировать** на падение, не разделяя судьбу упавшего процесса.
+
+### trap_exits — перехват сигналов завершения
+
+`trap_exits` позволяет связанному процессу **перехватить** сигнал завершения вместо того, чтобы самому упасть:
+
+```gleam
+import gleam/erlang/process
+
+pub fn main() {
+  // Включаем перехват сигналов завершения
+  process.trap_exits(True)
+
+  // Запускаем связанный процесс, который упадёт
+  let _pid = process.start(fn() {
+    process.sleep(50)
+    panic as "Ошибка"
+  }, True)
+
+  // Вместо падения получаем ExitMessage
+  let selector =
+    process.new_selector()
+    |> process.select_trapped_exits(fn(exit_msg) { exit_msg })
+
+  case process.selector_receive(selector, 200) {
+    Ok(process.ExitMessage(pid: _, reason:)) -> {
+      case reason {
+        process.Normal -> "нормальное завершение"
+        process.Killed -> "процесс убит"
+        process.Abnormal(_) -> "аварийное завершение"
+      }
+    }
+    Error(Nil) -> "таймаут"
+  }
+}
+```
+
+> **Примечание:** `trap_exits` нужен редко. В большинстве случаев используйте супервизоры вместо ручного перехвата.
+
+## Таймеры
+
+BEAM предоставляет встроенные таймеры для отложенной отправки сообщений.
+
+### send_after
+
+`process.send_after(subject, delay, message)` отправляет сообщение через указанное количество миллисекунд:
+
+```gleam
+import gleam/erlang/process
+
+pub fn main() {
+  let subject = process.new_subject()
+
+  // Отправить сообщение через 500 мс
+  let timer = process.send_after(subject, 500, "Время вышло!")
+
+  // Ждём сообщение
+  let assert Ok(msg) = process.receive(subject, 1000)
+  // msg == "Время вышло!"
+}
+```
+
+`process.send_after` возвращает `TimerReference` — он понадобится, если нужно отменить таймер. `process.receive` блокирует текущий процесс до получения сообщения или истечения таймаута (второй аргумент в мс).
+
+### cancel_timer
+
+Таймер можно отменить до срабатывания:
+
+```gleam
+let timer = process.send_after(subject, 5000, "tick")
+
+// Отменяем таймер
+case process.cancel_timer(timer) {
+  process.Cancelled(time_remaining:) ->
+    io.println("Отменён, оставалось: " <> int.to_string(time_remaining) <> " мс")
+  process.TimerNotFound ->
+    io.println("Таймер уже сработал или не найден")
+}
+```
+
+`process.TimerNotFound` означает, что таймер уже сработал к моменту отмены — типичная гонка состояний, которую нужно предусмотреть. `time_remaining` содержит оставшееся время в миллисекундах на момент отмены.
+
+### sleep
+
+`process.sleep(ms)` приостанавливает текущий процесс на указанное время. Это **не** блокирует другие процессы — только текущий:
+
+```gleam
+process.sleep(1000)  // Пауза 1 секунда
+```
+
+На BEAM `sleep` не блокирует поток ОС — планировщик переключится на другие лёгкие процессы, а текущий будет разбужен по истечении указанного времени.
+
+## Супервизоры
+
+Супервизоры — сердце философии «Let it crash». Вместо того чтобы писать защитный код для каждой возможной ошибки, мы позволяем процессам падать и полагаемся на супервизоров для восстановления.
+
+### Философия «Let it crash»
+
+В традиционном программировании ошибки обрабатываются «оборонительно»:
+
+```text
+// Типичный подход — оборонительное программирование
+try {
+  resource = acquire()
+  try {
+    result = process(resource)
+  } catch (ProcessingError e) {
+    log(e)
+    rollback(resource)
+    return default
+  } finally {
+    release(resource)
+  }
+} catch (AcquireError e) {
+  log(e)
+  return null
+}
+```
+
+На BEAM подход другой:
+
+```text
+// BEAM подход — Let it crash
+result = process(acquire())
+// Если что-то пошло не так — процесс упадёт
+// Супервизор перезапустит его в чистом состоянии
+```
+
+**Почему это работает?**
+
+1. **Изоляция** — падение одного процесса не затрагивает другие
+2. **Чистый перезапуск** — новый процесс начинает с известного хорошего состояния
+3. **Отделение обработки ошибок** — логика восстановления в супервизоре, бизнес-логика — в акторе
+4. **Работает для непредвиденных ошибок** — нет нужды предвидеть все возможные сбои
+
+> **Важно:** «Let it crash» не означает «игнорируй ошибки». Ожидаемые ошибки (невалидный ввод, файл не найден) обрабатываются через `Result`. «Let it crash» — для **неожиданных** ситуаций (OOM, битые данные, баги).
+
+### static_supervisor
+
+`gleam/otp/static_supervisor` создаёт дерево надзора:
+
+```gleam
+import gleam/otp/actor
+import gleam/otp/static_supervisor as supervisor
+import gleam/otp/supervision
+
+pub fn start_application() -> actor.StartResult(supervisor.Supervisor) {
+  supervisor.new(supervisor.OneForOne)
+  |> supervisor.add(supervision.worker(start_counter))
+  |> supervisor.add(supervision.worker(start_cache))
+  |> supervisor.start
+}
+```
+
+`supervision.worker(start_fn)` оборачивает функцию запуска актора. Супервизор вызовет эту функцию при старте и при каждом перезапуске.
+
+### Стратегии перезапуска
+
+Супервизор должен знать, что делать при падении дочернего процесса. Три стратегии:
+
+**OneForOne** — перезапускается только упавший процесс:
+
+```text
+До падения:  [A] [B] [C]
+B падает:     [A] [B'] [C]    ← только B перезапущен
+```
+
+Используйте, когда дочерние процессы **независимы** друг от друга.
+
+**OneForAll** — при падении одного перезапускаются **все**:
+
+```text
+До падения:  [A] [B] [C]
+B падает:     [A'] [B'] [C']  ← все перезапущены
+```
+
+Используйте, когда дочерние процессы **тесно связаны** и не могут работать без друг друга.
+
+**RestForOne** — перезапускаются упавший и все запущенные **после** него:
+
+```text
+До падения:  [A] [B] [C]
+B падает:     [A] [B'] [C']   ← B и C перезапущены, A не тронут
+```
+
+Используйте, когда есть **упорядоченная зависимость**: C зависит от B, B зависит от A.
+
+```gleam
+// OneForOne — независимые воркеры
+supervisor.new(supervisor.OneForOne)
+
+// OneForAll — тесно связанные сервисы
+supervisor.new(supervisor.OneForAll)
+
+// RestForOne — цепочка зависимостей: db → cache → web
+supervisor.new(supervisor.RestForOne)
+|> supervisor.add(supervision.worker(start_database))
+|> supervisor.add(supervision.worker(start_cache))
+|> supervisor.add(supervision.worker(start_web))
+```
+
+Неправильный выбор стратегии ведёт к проблемам: `OneForAll` для независимых процессов порождает лишние перезапуски; `OneForOne` для сильно связанных — оставляет систему в несогласованном состоянии. Если сомневаетесь — начинайте с `OneForOne` и меняйте, когда поведение оказывается некорректным.
+
+### Настройка допуска перезапуска
+
+Чтобы избежать бесконечных циклов перезапуска, можно ограничить частоту:
+
+```gleam
+supervisor.new(supervisor.OneForOne)
+|> supervisor.restart_tolerance(intensity: 5, period: 60)
+// Максимум 5 перезапусков за 60 секунд
+// Если больше — супервизор сам завершается
+```
+
+Если лимит превышен, супервизор считает ситуацию неисправимой и завершается сам — его ошибка поднимается к родительскому супервизору по дереву. Это предотвращает бесконечные циклы перезапуска: если процесс падает сразу после старта снова и снова, значит проблема системная, а не временная.
+
+### Стратегии перезапуска дочерних процессов
+
+Каждый дочерний процесс имеет собственную стратегию:
+
+```gleam
+// Permanent — всегда перезапускать (по умолчанию)
+supervision.worker(start_critical_service)
+|> supervision.restart(supervision.Permanent)
+
+// Transient — перезапускать только при аварийном завершении
+supervision.worker(start_worker)
+|> supervision.restart(supervision.Transient)
+
+// Temporary — никогда не перезапускать
+supervision.worker(start_one_off_task)
+|> supervision.restart(supervision.Temporary)
+```
+
+Стратегия по умолчанию — `Permanent`: актор всегда перезапускается, независимо от причины завершения. `Transient` подходит для воркеров, которые могут завершиться нормально (обработали задачу), но должны перезапускаться при сбоях. `Temporary` — для одноразовых задач, которые не нужно повторять.
+
+### Деревья супервизоров
+
+В реальных приложениях супервизоры образуют дерево. Корневой супервизор наблюдает за дочерними супервизорами, которые в свою очередь наблюдают за рабочими процессами:
+
+```text
+                [Корневой супервизор]
+                /                   \
+    [Супервизор БД]           [Супервизор воркеров]
+    /           \              /        |        \
+  [Пул         [Кеш]      [Воркер1] [Воркер2] [Воркер3]
+   подключений]
+```
+
+Если Воркер2 упадёт — Супервизор воркеров перезапустит его. Если Супервизор воркеров сам упадёт — Корневой супервизор перезапустит его вместе со всеми воркерами. Это обеспечивает **поэтапное восстановление**.
+
+## Проект: конкурентный счётчик с супервизором
+
+Объединим все концепции в рабочем проекте. Создадим счётчик с API для инкремента, декремента и получения значения, обёрнутый в супервизор для отказоустойчивости.
+
+### Определение актора
+
+```gleam
+import gleam/erlang/process.{type Subject}
+import gleam/io
+import gleam/int
+import gleam/otp/actor
+import gleam/otp/static_supervisor as supervisor
+import gleam/otp/supervision
+import gleam/result
+
+// Тип сообщений
+pub type CounterMsg {
+  Increment
+  Decrement
+  GetCount(reply_to: Subject(Int))
+  Reset
+}
+
+// Обработчик сообщений
+fn handle_counter(
+  state: Int,
+  message: CounterMsg,
+) -> actor.Next(Int, CounterMsg) {
+  case message {
+    Increment -> actor.continue(state + 1)
+    Decrement -> actor.continue(state - 1)
+    GetCount(reply_to) -> {
+      process.send(reply_to, state)
+      actor.continue(state)
+    }
+    Reset -> actor.continue(0)
+  }
+}
+
+// Функция запуска актора (для супервизора)
+pub fn start_counter() -> actor.StartResult(Subject(CounterMsg)) {
+  actor.new(0)
+  |> actor.on_message(handle_counter)
+  |> actor.start
+}
+
+// Удобный API
+pub fn increment(counter: Subject(CounterMsg)) -> Nil {
+  actor.send(counter, Increment)
+}
+
+pub fn decrement(counter: Subject(CounterMsg)) -> Nil {
+  actor.send(counter, Decrement)
+}
+
+pub fn get_count(counter: Subject(CounterMsg)) -> Int {
+  actor.call(counter, waiting: 1000, sending: GetCount)
+}
+
+pub fn reset(counter: Subject(CounterMsg)) -> Nil {
+  actor.send(counter, Reset)
+}
+```
+
+Публичный API скрывает детали реализации: вызывающий код работает с `Subject(CounterMsg)`, не зная ничего о внутреннем сообщении `GetCount` или том, как работает `actor.call`.
+
+### Супервизор
+
+```gleam
+pub fn start_supervised() -> actor.StartResult(supervisor.Supervisor) {
+  supervisor.new(supervisor.OneForOne)
+  |> supervisor.restart_tolerance(intensity: 3, period: 10)
+  |> supervisor.add(supervision.worker(start_counter))
+  |> supervisor.start
+}
+```
+
+`supervision.worker(start_counter)` говорит супервизору: «этот дочерний процесс — рабочий (не супервизор)» и передаёт функцию запуска. `restart_tolerance(intensity: 3, period: 10)` — не более 3 перезапусков за 10 секунд.
+
+### Использование
+
+```gleam
+pub fn main() {
+  let assert Ok(sup) = start_supervised()
+
+  // Получаем Subject счётчика через start_counter напрямую
+  let assert Ok(counter) = start_counter()
+    |> result.map(fn(started) { started.data })
+
+  increment(counter)
+  increment(counter)
+  increment(counter)
+  decrement(counter)
+
+  let count = get_count(counter)
+  io.println("Счётчик: " <> int.to_string(count))
+  // Счётчик: 2
+}
+```
+
+Если процесс счётчика упадёт (из-за бага, OOM или непредвиденной ошибки), супервизор автоматически перезапустит его с начальным состоянием `0`.
+
+## Сравнение с другими языками
+
+| Возможность | Gleam/BEAM | Go | Rust | OCaml |
+| ------------- | ----------- | ----- | ------ | ------- |
+| Конкурентность | Процессы (акторы) | Goroutines + каналы | tokio tasks + каналы | Eio fibers |
+| Изоляция | Полная (свой heap) | Общая память | Ownership + Send/Sync | Общая память |
+| Планировщик | Вытесняющий | Кооперативный | Кооперативный | Кооперативный |
+| Отказоустойчивость | Супервизоры (OTP) | Нет встроенной | Нет встроенной | Нет встроенной |
+| Типобезопасность сообщений | Subject(msg) | chan T | mpsc::Sender<T> | Нет |
+| Распределённость | Встроенная (nodes) | Нет | Нет | Нет |
+
+Ключевое преимущество BEAM — **вытесняющий планировщик** и **встроенная отказоустойчивость** через деревья супервизоров. Другие языки требуют внешних фреймворков для аналогичного поведения.
 
 ## Упражнения
 
-Код упражнений находится в `exercises/chapter10/`.
+Все упражнения этой главы работают с процессами и акторами. Решения пишите в файле `exercises/chapter08/test/my_solutions.gleam`. Запускайте тесты:
 
-### Структура
-
-Файл `test/my_solutions.gleam` содержит шаблоны функций с `todo`. Запустите тесты:
-
-```bash
-cd exercises/chapter10
+```sh
+cd exercises/chapter08
 gleam test
 ```
 
-Тесты завершатся с ошибкой — заполните функции в `test/my_solutions.gleam`.
+Запускайте тесты после каждого упражнения — они проверяют корректность реализации актора и его поведение под нагрузкой.
 
----
+### 1. echo_actor — эхо-актор (Лёгкое)
 
-**Упражнение 10.1** (Лёгкое): Health-check body
-
-Функция `health_check_body() -> String` должна вернуть JSON-строку `{"status":"ok"}`.
+Создайте актор, который возвращает полученное сообщение обратно отправителю.
 
 ```gleam
-pub fn health_check_body() -> String {
-  todo
+pub type EchoMsg {
+  Echo(value: String, reply_to: process.Subject(String))
 }
+
+pub fn start_echo() -> Result(process.Subject(EchoMsg), actor.StartError)
+pub fn send_echo(actor: process.Subject(EchoMsg), message: String) -> String
 ```
 
-*Подсказка*: используйте `json.object` и `json.to_string` из `gleam_json`.
+**Примеры:**
 
----
+```text
+send_echo(actor, "hello") == "hello"
+send_echo(actor, "мир") == "мир"
+```
 
-**Упражнение 10.2** (Лёгкое): Парсинг JSON в тип
+**Подсказка:** состояние актора не используется — передайте `Nil`. Для `send_echo` используйте `actor.call`.
+
+### 2. accumulator — актор-аккумулятор (Лёгкое)
+
+Создайте актор, который накапливает сумму целых чисел.
 
 ```gleam
-pub type Todo {
-  Todo(title: String, completed: Bool)
+pub type AccMsg {
+  Add(value: Int)
+  GetTotal(reply_to: process.Subject(Int))
 }
 
-pub fn parse_todo(s: String) -> Result(Todo, Nil) {
-  todo
-}
+pub fn start_accumulator() -> Result(process.Subject(AccMsg), actor.StartError)
+pub fn accumulate(actor: process.Subject(AccMsg), value: Int) -> Nil
+pub fn get_total(actor: process.Subject(AccMsg)) -> Int
 ```
 
-*Подсказка*: `json.parse` + `decode.field`.
+**Примеры:**
 
----
+```text
+accumulate(actor, 10)
+accumulate(actor, 20)
+accumulate(actor, 30)
+get_total(actor) == 60
+```
 
-**Упражнение 10.3** (Лёгкое): Сериализация в JSON
+**Подсказка:** начальное состояние — `0`. `accumulate` использует `actor.send` (fire-and-forget), `get_total` — `actor.call`.
+
+### 3. spawn_compute — вычисление в процессе (Лёгкое)
+
+Реализуйте функцию, которая запускает произвольное вычисление в отдельном процессе и возвращает результат в вызывающий процесс.
 
 ```gleam
-pub fn todo_to_json_string(t: Todo) -> String {
-  todo
-}
+pub fn spawn_compute(f: fn() -> a) -> a
 ```
 
-*Подсказка*: `json.object` с полями `title` и `completed`.
+**Примеры:**
 
----
+```text
+spawn_compute(fn() { 42 }) == 42
+spawn_compute(fn() { "hello" }) == "hello"
+```
 
-**Упражнение 10.4** (Среднее, для самостоятельного изучения): Middleware для замера времени
+**Подсказка:** создайте Subject, запустите процесс через `process.start`, в процессе вызовите `f()` и отправьте результат через `process.send`. Получите результат через `process.receive`.
 
-Реализуйте middleware, который добавляет заголовок `X-Response-Time` с временем обработки в миллисекундах. Интеграция с Wisp требует системного времени через FFI.
+### 4. key_value_store — хранилище ключ-значение (Среднее)
 
----
+Создайте актор, реализующий in-memory хранилище ключ-значение на основе `Dict`.
 
-**Упражнение 10.5** (Сложное, для самостоятельного изучения): Auth middleware
+```gleam
+pub type KvMsg {
+  Put(key: String, value: String)
+  Get(key: String, reply_to: process.Subject(Result(String, Nil)))
+  Delete(key: String)
+  AllKeys(reply_to: process.Subject(List(String)))
+}
 
-Реализуйте middleware `require_auth`, который проверяет наличие Bearer-токена в заголовке `Authorization`. Без корректного токена — 401 Unauthorized.
+pub fn start_kv() -> Result(process.Subject(KvMsg), actor.StartError)
+pub fn kv_put(store: process.Subject(KvMsg), key: String, value: String) -> Nil
+pub fn kv_get(store: process.Subject(KvMsg), key: String) -> Result(String, Nil)
+pub fn kv_delete(store: process.Subject(KvMsg), key: String) -> Nil
+pub fn kv_all_keys(store: process.Subject(KvMsg)) -> List(String)
+```
 
-## Итоги
+**Примеры:**
 
-Мы построили REST API с:
-- **Wisp** для маршрутизации и middleware
-- **pog** для PostgreSQL
-- **Squirrel** для type-safe SQL (codegen из `.sql` файлов)
-- **gleam_json** + **gleam/dynamic/decode** для сериализации
+```text
+kv_put(store, "name", "Alice")
+kv_get(store, "name") == Ok("Alice")
+kv_get(store, "age") == Error(Nil)
+kv_delete(store, "name")
+kv_get(store, "name") == Error(Nil)
+kv_all_keys(store) == []
+```
 
-Ключевые паттерны Gleam в веб-разработке:
-- Маршруты — это `case` по `wisp.path_segments(req)`, никакого DSL
-- Middleware — это `use <- middleware(req)`, использование `use`-выражений
-- Контекст — явный параметр `ctx: Context`, никакого глобального состояния
-- Ошибки — `Result`, никаких исключений
+**Подсказка:** начальное состояние — `dict.new()`. Используйте `dict.insert`, `dict.get`, `dict.delete`, `dict.keys`.
 
-## Ресурсы
+### 5. stack_actor — актор-стек (Среднее)
 
-- [Wisp — официальная документация](https://gleam-wisp.github.io/wisp/)
-- [HexDocs — wisp](https://hexdocs.pm/wisp/)
-- [HexDocs — pog](https://hexdocs.pm/pog/)
-- [Squirrel — GitHub](https://github.com/giacomocavalieri/squirrel)
-- [HexDocs — gleam_json](https://hexdocs.pm/gleam_json/)
-- [Gleam web app tutorial](https://blog.andreyfadeev.com/p/gleam-web-application-development-tutorial)
+Создайте актор, реализующий стек (LIFO). Поддержите операции: push, pop, peek (посмотреть верхний без удаления), size.
+
+```gleam
+pub type StackMsg(a) {
+  StackPush(value: a)
+  StackPop(reply_to: process.Subject(Result(a, Nil)))
+  StackPeek(reply_to: process.Subject(Result(a, Nil)))
+  StackSize(reply_to: process.Subject(Int))
+}
+
+pub fn start_stack() -> Result(process.Subject(StackMsg(a)), actor.StartError)
+pub fn stack_push(stack: process.Subject(StackMsg(a)), value: a) -> Nil
+pub fn stack_pop(stack: process.Subject(StackMsg(a))) -> Result(a, Nil)
+pub fn stack_peek(stack: process.Subject(StackMsg(a))) -> Result(a, Nil)
+pub fn stack_size(stack: process.Subject(StackMsg(a))) -> Int
+```
+
+**Примеры:**
+
+```text
+stack_push(s, 1)
+stack_push(s, 2)
+stack_push(s, 3)
+stack_peek(s) == Ok(3)    // верхний элемент, не удаляя
+stack_pop(s) == Ok(3)     // извлечь верхний
+stack_pop(s) == Ok(2)
+stack_size(s) == 1        // остался только 1
+stack_pop(s) == Ok(1)
+stack_pop(s) == Error(Nil) // пустой стек
+```
+
+**Подсказка:** состояние — `List(a)`. Push — `[value, ..stack]`. Pop — pattern matching на `[top, ..rest]`.
+
+### 6. parallel_map — параллельный map (Сложное)
+
+Реализуйте функцию, которая применяет функцию к каждому элементу списка **параллельно**, запуская отдельный процесс для каждого элемента.
+
+```gleam
+pub fn parallel_map(items: List(a), f: fn(a) -> b) -> List(b)
+```
+
+Результаты должны быть в **том же порядке**, что и входной список.
+
+**Примеры:**
+
+```text
+parallel_map([1, 2, 3], fn(x) { x * 2 }) == [2, 4, 6]
+parallel_map(["a", "b"], string.uppercase) == ["A", "B"]
+parallel_map([], fn(x) { x }) == []
+```
+
+**Подсказка:** для сохранения порядка создайте отдельный Subject для каждого элемента. Запустите процесс для каждого элемента, который отправит результат в свой Subject. Затем соберите результаты в правильном порядке через `list.map(subjects, fn(s) { receive(s, ...) })`.
+
+## Заключение
+
+В этой главе мы изучили:
+
+- **Модель акторов** — изоляция, mailbox, последовательная обработка
+- **Процессы BEAM** — легковесные, с вытесняющей многозадачностью
+- **Subject** — типизированный канал для обмена сообщениями
+- **Selector** — мультиплексирование нескольких источников
+- **Акторы** (`gleam/otp/actor`) — процессы с состоянием и обработчиком
+- **actor.send** и **actor.call** — асинхронные и синхронные сообщения
+- **Мониторинг и связывание** — обнаружение сбоев
+- **Супервизоры** — автоматический перезапуск упавших процессов
+- **«Let it crash»** — философия отказоустойчивости
+
+В следующей главе мы изучим тестирование в Gleam — от unit-тестов с gleeunit до property-based testing с qcheck и snapshot-тестов с birdie.

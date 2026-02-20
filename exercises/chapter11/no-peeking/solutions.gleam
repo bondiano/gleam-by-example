@@ -1,88 +1,62 @@
 //// Референсные решения — не подсматривайте, пока не попробуете сами!
 
+import gleam/dynamic/decode
 import gleam/int
+import gleam/json
 import gleam/list
-import lustre/attribute
-import lustre/element.{type Element}
-import lustre/element/html
-import lustre/event
+import gleam/result
+import qcheck
 
-// Упражнение 1
-pub fn todo_item_view(text: String, done: Bool) -> Element(msg) {
-  case done {
-    True ->
-      html.li([attribute.class("done")], [element.text("✓ " <> text)])
-    False ->
-      html.li([], [element.text("☐ " <> text)])
+// ============================================================
+// Упражнение 1: is_sorted
+// ============================================================
+
+pub fn is_sorted(xs: List(Int)) -> Bool {
+  case xs {
+    [] | [_] -> True
+    [a, b, ..rest] ->
+      case a <= b {
+        True -> is_sorted([b, ..rest])
+        False -> False
+      }
   }
 }
 
-// Упражнение 2
-pub fn render_todo_list(todos: List(#(String, Bool))) -> Element(msg) {
-  case todos {
-    [] -> html.p([attribute.class("empty")], [element.text("Список пуст")])
-    items ->
-      html.ul(
-        [],
-        list.map(items, fn(item) { todo_item_view(item.0, item.1) }),
-      )
-  }
+// ============================================================
+// Упражнение 2: encode_ints / decode_ints
+// ============================================================
+
+pub fn encode_ints(xs: List(Int)) -> String {
+  xs
+  |> json.array(json.int)
+  |> json.to_string
 }
 
-// Упражнения 3-5: счётчик
-
-pub type CounterMsg {
-  CounterIncrement
-  CounterDecrement
-  CounterReset
+pub fn decode_ints(s: String) -> Result(List(Int), Nil) {
+  json.parse(s, decode.list(decode.int))
+  |> result.map_error(fn(_) { Nil })
 }
 
-pub fn counter_init(_flags) -> Int {
-  0
+// ============================================================
+// Упражнение 3: my_sort
+// ============================================================
+
+pub fn my_sort(xs: List(Int)) -> List(Int) {
+  list.sort(xs, int.compare)
 }
 
-pub fn counter_update(model: Int, msg: CounterMsg) -> Int {
-  case msg {
-    CounterIncrement -> model + 1
-    CounterDecrement -> model - 1
-    CounterReset -> 0
-  }
+// ============================================================
+// Упражнение 4: int_in_range
+// ============================================================
+
+pub fn int_in_range(lo: Int, hi: Int) -> qcheck.Generator(Int) {
+  qcheck.int_uniform_inclusive(lo, hi)
 }
 
-pub fn counter_view(model: Int) -> Element(CounterMsg) {
-  html.div([attribute.class("counter")], [
-    html.button([event.on_click(CounterDecrement)], [element.text("−")]),
-    html.span([], [element.text(int.to_string(model))]),
-    html.button([event.on_click(CounterIncrement)], [element.text("+")]),
-    html.button([event.on_click(CounterReset)], [element.text("Сброс")]),
-  ])
-}
+// ============================================================
+// Упражнение 5: clamp
+// ============================================================
 
-// Упражнение 6: TODO-список
-
-pub type TodoItem {
-  TodoItem(id: Int, text: String, done: Bool)
-}
-
-pub type TodoMsg {
-  AddTodo(text: String)
-  ToggleTodo(id: Int)
-  DeleteTodo(id: Int)
-}
-
-pub fn todo_update(todos: List(TodoItem), msg: TodoMsg) -> List(TodoItem) {
-  case msg {
-    AddTodo(text) -> {
-      let id = list.length(todos) + 1
-      list.append(todos, [TodoItem(id:, text:, done: False)])
-    }
-    ToggleTodo(id) ->
-      list.map(todos, fn(t) {
-        case t.id == id {
-          True -> TodoItem(..t, done: !t.done)
-          False -> t
-        }
-      })
-    DeleteTodo(id) -> list.filter(todos, fn(t) { t.id != id })
-  }
+pub fn clamp(value: Int, lo: Int, hi: Int) -> Int {
+  int.min(hi, int.max(lo, value))
 }

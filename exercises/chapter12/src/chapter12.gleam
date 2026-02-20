@@ -1,198 +1,286 @@
-// Примеры: реальный TODO-бот на Telega v0.14
+// Пример: TODO API с ETS-хранилищем
 //
-// Для запуска замените "YOUR_BOT_TOKEN" на токен от @BotFather, затем `gleam run`.
-// Тесты упражнений (my_solutions.gleam) проверяют чистую логику независимо от этого файла.
+// Запуск: gleam run
+// Сервер слушает на http://localhost:8080
 //
-// Ключевые паттерны Telega:
-//   1. Polling: new_for_polling → with_router → init_for_polling_nil_session
-//   2. Router: router.new → on_command / on_any_text
-//   3. Ответы: reply.with_text(ctx, text)
-//   4. Многошаговый диалог: telega.wait_text / telega.wait_number
-//   5. Логирование контекста: telega.log_context(ctx, "label")
+// ETS (Erlang Term Storage) — встроенная in-memory база данных BEAM.
+// Ключевые свойства:
+//   - O(1) чтение/запись по ключу
+//   - Параллельные чтения без блокировок
+//   - Named tables — доступны по имени-атому из любого процесса
+//   - Данные живут независимо от жизненного цикла создавшего их процесса
+//
+// Маршруты:
+//   GET    /health       → {"status":"ok"}
+//   GET    /todos        → {"todos":[...]}
+//   POST   /todos        → {"title":"..."} → 201
+//   GET    /todos/:id    → {"id":"...","title":"...","completed":false}
+//   DELETE /todos/:id    → 204
 
-import gleam/int
+import gleam/dynamic.{type Dynamic}
+import gleam/dynamic/decode
+import gleam/erlang/atom.{type Atom}
+import gleam/erlang/process
+import gleam/http
+import gleam/json
 import gleam/list
-import gleam/option.{None}
+import gleam/option.{type Option, None, Some}
 import gleam/string
+import mist
+import wisp
+import wisp/wisp_mist
 
-import telega
-import telega/polling
-import telega/reply
-import telega/router
-import telega/update.{type Command}
+// ── ETS FFI ─────────────────────────────────────────────────────────────────
+//
+// @external позволяет вызывать Erlang-функции напрямую из Gleam.
+// Формат: @external(erlang, "модуль", "функция")
+//
+// ETS хранит Erlang-кортежи. Первый элемент — ключ (key position = 1 по умолчанию).
+// В Gleam кортеж #(a, b, c) компилируется в Erlang tuple {a, b, c} — совместимо с ETS.
 
-// ── 1. Точка входа ──────────────────────────────────────────────────────────
+// Создаёт именованную ETS-таблицу.
+// Возвращает имя-атом — по нему обращаются к таблице из любого процесса.
+@external(erlang, "ets", "new")
+fn ets_new(name: Atom, options: List(Dynamic)) -> Atom
 
-/// Запускает TODO-бота в режиме long polling.
+// Вставляет кортеж в таблицу. Ключ = первый элемент кортежа.
+// При совпадении ключа перезаписывает запись (тип set).
+@external(erlang, "ets", "insert")
+fn ets_insert(table: Atom, record: #(String, String, Bool)) -> Bool
+
+// Ищет по ключу: возвращает список кортежей (0 или 1 для set).
+@external(erlang, "ets", "lookup")
+fn ets_lookup(table: Atom, key: String) -> List(#(String, String, Bool))
+
+// Возвращает все записи таблицы.
+@external(erlang, "ets", "tab2list")
+fn ets_tab2list(table: Atom) -> List(#(String, String, Bool))
+
+// Удаляет запись по ключу. Возвращает true даже если ключ не существовал.
+@external(erlang, "ets", "delete")
+fn ets_delete_key(table: Atom, key: String) -> Bool
+
+// ── Инициализация хранилища ──────────────────────────────────────────────────
+
+/// Создаёт ETS-таблицу для хранения задач.
 ///
-/// Архитектура polling-бота:
-///   new_for_polling(token)   — создаёт конфигурацию без webhook
-///   with_router(router)      — подключает обработчики
-///   init_for_polling_nil_session() — запускает бота (сессия = Nil)
-///   start_polling_default(bot) — запускает цикл опроса Telegram API
-///   wait_finish(poller)      — блокирует до завершения
+/// Опции:
+///   set         — один ключ = одна запись (без дубликатов)
+///   public      — любой процесс может читать и писать
+///   named_table — таблица доступна по имени-атому, не только по ссылке
+///
+/// Атомы в Erlang/Gleam — интернированные константы. atom.create/1
+/// создаёт атом в таблице атомов BEAM (никогда не GC), поэтому
+/// используем статические имена, а не user input.
+pub fn create_store(name: String) -> Atom {
+  let table_name = atom.create(name)
+  let options = [
+    atom.to_dynamic(atom.create("set")),
+    atom.to_dynamic(atom.create("public")),
+    atom.to_dynamic(atom.create("named_table")),
+  ]
+  ets_new(table_name, options)
+}
+
+// ── CRUD поверх ETS ──────────────────────────────────────────────────────────
+
+pub type Todo {
+  Todo(id: String, title: String, completed: Bool)
+}
+
+/// Создаёт задачу и сохраняет в ETS.
+/// Кортеж #(id, title, completed) — ETS-запись с ключом id.
+pub fn insert_todo(table: Atom, title: String) -> Todo {
+  let id = wisp.random_string(8)
+  let item = Todo(id: id, title: title, completed: False)
+  ets_insert(table, #(id, title, False))
+  item
+}
+
+/// Читает все задачи из ETS.
+/// ets:tab2list возвращает все кортежи; row.0/row.1/row.2 — поля кортежа.
+pub fn list_all(table: Atom) -> List(Todo) {
+  ets_tab2list(table)
+  |> list.map(fn(row) { Todo(id: row.0, title: row.1, completed: row.2) })
+}
+
+/// Ищет задачу по id через ets:lookup (O(1) по хэшу).
+pub fn find_todo(table: Atom, id: String) -> Option(Todo) {
+  case ets_lookup(table, id) {
+    [#(i, title, completed)] -> Some(Todo(id: i, title: title, completed:))
+    _ -> None
+  }
+}
+
+/// Обновляет поле completed. ETS insert перезаписывает запись целиком.
+pub fn complete_todo(table: Atom, id: String) -> Option(Todo) {
+  case find_todo(table, id) {
+    None -> None
+    Some(item) -> {
+      ets_insert(table, #(item.id, item.title, True))
+      Some(Todo(..item, completed: True))
+    }
+  }
+}
+
+/// Удаляет задачу из ETS.
+pub fn remove_todo(table: Atom, id: String) -> Bool {
+  ets_delete_key(table, id)
+}
+
+// ── Контекст приложения ──────────────────────────────────────────────────────
+
+/// Контекст хранит имя ETS-таблицы.
+/// Named table — атом-константа, поэтому Context можно передавать
+/// через замыкания без накладных расходов.
+pub type Context {
+  Context(table: Atom)
+}
+
+// ── JSON-сериализация ────────────────────────────────────────────────────────
+
+fn todo_to_json(t: Todo) -> json.Json {
+  json.object([
+    #("id", json.string(t.id)),
+    #("title", json.string(t.title)),
+    #("completed", json.bool(t.completed)),
+  ])
+}
+
+// ── HTTP-обработчики ─────────────────────────────────────────────────────────
+
+/// Health check: GET /health → 200 {"status":"ok"}
+pub fn health_handler(_req: wisp.Request) -> wisp.Response {
+  json.object([#("status", json.string("ok"))])
+  |> json.to_string
+  |> wisp.json_response(200)
+}
+
+/// GET /todos → 200 {"todos":[...]}
+/// Читает все записи из ETS — O(n), параллельно с другими читателями.
+pub fn list_todos_handler(req: wisp.Request, ctx: Context) -> wisp.Response {
+  use <- wisp.require_method(req, http.Get)
+  let items = list_all(ctx.table)
+  json.object([#("todos", json.array(items, todo_to_json))])
+  |> json.to_string
+  |> wisp.json_response(200)
+}
+
+/// POST /todos {"title":"..."} → 201 {"id":"...","title":"...","completed":false}
+/// Вставка в ETS — O(1).
+pub fn create_todo_handler(req: wisp.Request, ctx: Context) -> wisp.Response {
+  use <- wisp.require_method(req, http.Post)
+  use body <- wisp.require_json(req)
+
+  let title_decoder = {
+    use title <- decode.field("title", decode.string)
+    decode.success(title)
+  }
+
+  case decode.run(body, title_decoder) {
+    Error(_) -> wisp.unprocessable_content()
+    Ok(title) ->
+      case string.trim(title) {
+        "" -> wisp.unprocessable_content()
+        t -> {
+          let item = insert_todo(ctx.table, t)
+          todo_to_json(item)
+          |> json.to_string
+          |> wisp.json_response(201)
+        }
+      }
+  }
+}
+
+/// GET /todos/:id → 200 или 404
+/// Lookup по ключу — O(1) в ETS.
+pub fn get_todo_handler(
+  req: wisp.Request,
+  ctx: Context,
+  id: String,
+) -> wisp.Response {
+  use <- wisp.require_method(req, http.Get)
+  case find_todo(ctx.table, id) {
+    None -> wisp.not_found()
+    Some(item) ->
+      todo_to_json(item)
+      |> json.to_string
+      |> wisp.json_response(200)
+  }
+}
+
+/// DELETE /todos/:id → 204 или 404
+pub fn delete_todo_handler(
+  req: wisp.Request,
+  ctx: Context,
+  id: String,
+) -> wisp.Response {
+  use <- wisp.require_method(req, http.Delete)
+  case find_todo(ctx.table, id) {
+    None -> wisp.not_found()
+    Some(_) -> {
+      remove_todo(ctx.table, id)
+      wisp.response(204)
+    }
+  }
+}
+
+// ── Middleware ────────────────────────────────────────────────────────────────
+
+pub fn middleware(
+  req: wisp.Request,
+  handler: fn(wisp.Request) -> wisp.Response,
+) -> wisp.Response {
+  use <- wisp.log_request(req)
+  use <- wisp.rescue_crashes
+  use req <- wisp.handle_head(req)
+  handler(req)
+}
+
+// ── Маршрутизатор ─────────────────────────────────────────────────────────────
+
+pub fn router(req: wisp.Request, ctx: Context) -> wisp.Response {
+  case wisp.path_segments(req) {
+    ["health"] -> health_handler(req)
+    ["todos"] ->
+      case req.method {
+        http.Get -> list_todos_handler(req, ctx)
+        http.Post -> create_todo_handler(req, ctx)
+        _ -> wisp.method_not_allowed([http.Get, http.Post])
+      }
+    ["todos", id] ->
+      case req.method {
+        http.Get -> get_todo_handler(req, ctx, id)
+        http.Delete -> delete_todo_handler(req, ctx, id)
+        _ -> wisp.method_not_allowed([http.Get, http.Delete])
+      }
+    _ -> wisp.not_found()
+  }
+}
+
+// ── Точка входа ───────────────────────────────────────────────────────────────
+
 pub fn main() {
-  let todo_router =
-    router.new("todo_bot")
-    |> router.on_command("start", handle_start)
-    |> router.on_command("help", handle_help)
-    |> router.on_command("add", handle_add)
-    |> router.on_command("done", handle_done)
-    |> router.on_any_text(handle_unknown)
+  wisp.configure_logger()
 
-  let assert Ok(bot) =
-    telega.new_for_polling(token: "YOUR_BOT_TOKEN")
-    |> telega.with_router(todo_router)
-    |> telega.init_for_polling_nil_session()
+  // Создаём ETS-таблицу при старте.
+  // Named table "todos" доступна из любого процесса по имени-атому.
+  let table = create_store("todos")
+  let ctx = Context(table:)
 
-  let assert Ok(poller) = polling.start_polling_default(bot)
-  polling.wait_finish(poller)
-}
+  // Заполняем начальными данными.
+  insert_todo(table, "Изучить Gleam")
+  insert_todo(table, "Написать TODO API с ETS")
+  insert_todo(table, "Почитать про BEAM")
 
-// ── 2. Обработчики команд ───────────────────────────────────────────────────
-//
-// Сигнатура командного обработчика: fn(ctx, cmd: Command) -> Result(ctx, error)
-// log_context добавляет метку к логам этого обработчика.
+  let secret = wisp.random_string(64)
 
-fn handle_start(ctx, _cmd: Command) {
-  use ctx <- telega.log_context(ctx, "start")
   let assert Ok(_) =
-    reply.with_text(
-      ctx,
-      "Привет! Я TODO-бот 📝\n\n"
-        <> "Команды:\n"
-        <> "/add — добавить задачу\n"
-        <> "/done — отметить выполненной\n"
-        <> "/help — список команд",
-    )
-  Ok(ctx)
-}
+    fn(req) { middleware(req, router(_, ctx)) }
+    |> wisp_mist.handler(secret)
+    |> mist.new
+    |> mist.port(8080)
+    |> mist.start
 
-fn handle_help(ctx, _cmd: Command) {
-  use ctx <- telega.log_context(ctx, "help")
-  let assert Ok(_) =
-    reply.with_text(
-      ctx,
-      "Доступные команды:\n"
-        <> "/add — добавить новую задачу\n"
-        <> "/done — отметить задачу выполненной\n"
-        <> "/help — это сообщение",
-    )
-  Ok(ctx)
-}
-
-/// /add — многошаговый диалог через telega.wait_text.
-///
-/// Паттерн wait_text:
-///   1. reply.with_text — отправляем запрос пользователю
-///   2. use ctx, title <- telega.wait_text(...)
-///      — приостанавливаем обработчик, ждём следующего текстового сообщения
-///   3. Когда пользователь ответил — продолжаем со следующей строки
-///
-/// or: None   — нет fallback-обработчика для нетекстовых сообщений
-/// timeout: None — ожидание без ограничения по времени
-fn handle_add(ctx, _cmd: Command) {
-  use ctx <- telega.log_context(ctx, "add")
-  let assert Ok(_) = reply.with_text(ctx, "Введите название задачи:")
-
-  use ctx, title <- telega.wait_text(ctx, or: None, timeout: None)
-
-  let title = string.trim(title)
-  case title {
-    "" -> {
-      let assert Ok(_) =
-        reply.with_text(ctx, "Название не может быть пустым. Попробуйте снова.")
-      Ok(ctx)
-    }
-    t -> {
-      let assert Ok(_) =
-        reply.with_text(ctx, "✅ Задача «" <> t <> "» добавлена!")
-      Ok(ctx)
-    }
-  }
-}
-
-/// /done — многошаговый диалог через telega.wait_number.
-///
-/// wait_number автоматически:
-///   - проверяет, что ввод является целым числом
-///   - валидирует диапазон (min/max), если задан
-///   - повторяет запрос при невалидном вводе
-///
-/// В данном примере min/max = None — принимаем любое число.
-fn handle_done(ctx, _cmd: Command) {
-  use ctx <- telega.log_context(ctx, "done")
-  let assert Ok(_) = reply.with_text(ctx, "Введите номер задачи:")
-
-  use ctx, n <- telega.wait_number(
-    ctx,
-    min: None,
-    max: None,
-    or: None,
-    timeout: None,
-  )
-  let assert Ok(_) =
-    reply.with_text(ctx, "✅ Задача " <> int.to_string(n) <> " выполнена!")
-  Ok(ctx)
-}
-
-/// Обработчик произвольного текста вне команд.
-///
-/// router.on_any_text — перехватывает все текстовые сообщения,
-/// не совпавшие с предыдущими правилами роутера.
-fn handle_unknown(ctx, text: String) {
-  use ctx <- telega.log_context(ctx, "unknown")
-  let assert Ok(_) =
-    reply.with_text(
-      ctx,
-      "Не знаю команду: «" <> text <> "»\n/help — список команд",
-    )
-  Ok(ctx)
-}
-
-// ── 3. Чистая бизнес-логика ─────────────────────────────────────────────────
-//
-// Функции ниже не зависят от Telega.
-// Именно такую логику тестируют упражнения в my_solutions.gleam.
-
-/// Одна задача в TODO-листе.
-pub type Task {
-  Task(text: String, done: Bool)
-}
-
-/// Форматирует одну задачу: ✅ или ☐ плюс текст.
-///
-/// ```gleam
-/// format_task(Task("Купить молоко", False)) // → "☐ Купить молоко"
-/// format_task(Task("Написать тесты", True)) // → "✅ Написать тесты"
-/// ```
-pub fn format_task(t: Task) -> String {
-  case t.done {
-    False -> "☐ " <> t.text
-    True -> "✅ " <> t.text
-  }
-}
-
-/// Форматирует список задач для отправки в Telegram-чат.
-///
-/// ```gleam
-/// format_task_list([])
-/// // → "Список задач пуст. Добавьте: /add <задача>"
-///
-/// format_task_list([Task("Купить молоко", False), Task("Написать тесты", True)])
-/// // → "Ваши задачи:\n1. ☐ Купить молоко\n2. ✅ Написать тесты"
-/// ```
-pub fn format_task_list(tasks: List(Task)) -> String {
-  case tasks {
-    [] -> "Список задач пуст. Добавьте: /add <задача>"
-    items -> {
-      let lines =
-        items
-        |> list.index_map(fn(t, i) {
-          int.to_string(i + 1) <> ". " <> format_task(t)
-        })
-        |> string.join("\n")
-      "Ваши задачи:\n" <> lines
-    }
-  }
+  process.sleep_forever()
 }

@@ -1,100 +1,81 @@
 //// Здесь вы можете писать свои решения упражнений.
 ////
 //// Запуск тестов: gleam test
+//// После каждого упражнения запускайте тесты и смотрите, что проходит.
 
-// ── Типы (не менять) ─────────────────────────────────────────────────────
-
-/// Команды бота.
-pub type BotCommand {
-  CmdStart
-  CmdHelp
-  CmdList
-  CmdAdd(title: String)
-  CmdDone(index: Int)
-  CmdUnknown(text: String)
-}
-
-/// Состояния диалога.
-pub type ConvState {
-  Idle
-  AwaitingTitle
-}
-
-/// Одна задача.
-pub type Task {
-  Task(text: String, done: Bool)
-}
+import wisp
 
 // ── Упражнение 1 ─────────────────────────────────────────────────────────
-// Распарсите текст сообщения в команду.
+// Реализуйте обработчик health check.
 //
-// "/start"       → CmdStart
-// "/help"        → CmdHelp
-// "/list"        → CmdList
-// "/add Buy milk" → CmdAdd("Buy milk")
-// "/done 3"      → CmdDone(3)
-// "/done abc"    → CmdUnknown("/done abc")   ← нельзя парсить число
-// всё остальное  → CmdUnknown(text)
+// GET /health должен вернуть:
+//   статус 200
+//   тело:  {"status":"ok"}
 //
-// Подсказка: case string.trim(text) { "/add " <> title -> CmdAdd(title) ... }
-//            int.parse(n) для проверки что строка — число
+// Подсказка: wisp.ok(), wisp.json_response(body, status)
+//            json.object([#("key", json.string("value"))]) |> json.to_string
 
-pub fn parse_command(text: String) -> BotCommand {
+pub fn health_handler(_req: wisp.Request) -> wisp.Response {
   todo
 }
 
 // ── Упражнение 2 ─────────────────────────────────────────────────────────
-// Форматирует одну задачу.
+// Реализуйте эхо-обработчик.
 //
-// Task("Buy milk", False)   → "☐ Buy milk"
-// Task("Write tests", True) → "✅ Write tests"
+// POST /echo с телом {"text":"..."} → 200 {"echo":"..."}
+// GET /echo                          → 405 Method Not Allowed
+// POST с отсутствующим полем "text"  → 422 Unprocessable Content
+//
+// Подсказка:
+//   use <- wisp.require_method(req, http.Post)   — для проверки метода
+//   use body <- wisp.require_json(req)           — для чтения JSON тела
+//   decode.run(body, decoder)                    — для декодирования
 
-pub fn format_task(t: Task) -> String {
+pub fn echo_handler(req: wisp.Request) -> wisp.Response {
   todo
 }
 
 // ── Упражнение 3 ─────────────────────────────────────────────────────────
-// Форматирует список задач.
+// Реализуйте обработчик списка задач.
 //
-// []        → "Список задач пуст. Добавьте: /add <задача>"
-// [task...] → "Ваши задачи:\n1. ☐ Buy milk\n2. ✅ Write tests"
+// GET /todos → 200 {"todos":["title1","title2",...]}
+// Другие методы → 405
 //
-// Подсказка: list.index_map, string.join
+// Подсказка: json.array(list, json.string) — кодирует список строк
 
-pub fn format_task_list(tasks: List(Task)) -> String {
+pub fn list_todos_handler(
+  req: wisp.Request,
+  todos: List(String),
+) -> wisp.Response {
   todo
 }
 
 // ── Упражнение 4 ─────────────────────────────────────────────────────────
-// State machine для многошагового диалога.
-// Возвращает (новое_состояние, текст_ответа).
+// Реализуйте обработчик создания задачи.
 //
-// Idle + "/add"   → (AwaitingTitle, "Введите название задачи:")
-// Idle + "/help"  → (Idle, "Доступные команды:\n/list — список задач\n/add — добавить задачу\n/help — помощь")
-// Idle + другое   → (Idle, "Не понимаю. /help — список команд.")
-// AwaitingTitle + title → (Idle, "✅ Задача «title» добавлена!")
+// POST /todos с телом {"title":"..."} → 201 {"title":"..."}
+// POST с отсутствующим полем          → 422
+// GET/PUT/DELETE                      → 405
 //
-// Подсказка: case state, string.trim(input) { Idle, "/add" -> ... }
+// Подсказка: wisp.created() возвращает ответ со статусом 201
 
-pub fn conversation_step(state: ConvState, input: String) -> #(ConvState, String) {
+pub fn create_todo_handler(req: wisp.Request) -> wisp.Response {
   todo
 }
 
 // ── Упражнение 5 ─────────────────────────────────────────────────────────
-// Полный dispatch: команда → (обновлённые задачи, текст ответа).
+// Реализуйте маршрутизатор.
 //
-// CmdStart       → (tasks, "Привет! Я TODO-бот.\n/help — список команд")
-// CmdHelp        → (tasks, "Команды:\n/list — список задач\n/add <задача> — добавить\n/done <номер> — выполнено")
-// CmdList        → (tasks, форматированный список)
-// CmdAdd(title)  → ([..tasks, Task(title, False)], "✅ Задача «title» добавлена!")
-// CmdDone(n)     → задача n-1 помечается done=True; если нет → "Нет задачи с номером n"
-// CmdUnknown(t)  → (tasks, "Не понимаю: t. /help — список команд")
+// GET  /health      → 200 {"status":"ok"}
+// GET  /todos       → 200 {"todos":[]}       (передайте пустой список)
+// POST /todos       → делегировать create_todo_handler
+// GET  /todos/:id   → 200 {"id":"<id>"}
+// всё остальное     → 404
 //
-// Подсказка: используйте format_task_list из упражнения 3
+// Подсказка:
+//   wisp.path_segments(req) — возвращает List(String) сегментов пути
+//   case wisp.path_segments(req) { ["health"] -> ... ["todos", id] -> ... }
 
-pub fn dispatch(
-  cmd: BotCommand,
-  tasks: List(Task),
-) -> #(List(Task), String) {
+pub fn router(req: wisp.Request) -> wisp.Response {
   todo
 }

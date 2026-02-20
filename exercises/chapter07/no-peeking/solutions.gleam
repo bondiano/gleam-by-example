@@ -106,7 +106,15 @@ pub fn pokemon_decoder() -> decode.Decoder(Pokemon) {
     decode.list(ability_name_decoder()),
   )
   use stats <- decode.field("stats", decode.list(stat_decoder()))
-  decode.success(Pokemon(id:, name:, height:, weight:, types:, abilities:, stats:))
+  decode.success(Pokemon(
+    id:,
+    name:,
+    height:,
+    weight:,
+    types:,
+    abilities:,
+    stats:,
+  ))
 }
 
 pub fn parse_pokemon(json_str: String) -> Result(Pokemon, Nil) {
@@ -163,20 +171,12 @@ fn named_resource_decoder() -> decode.Decoder(NamedResource) {
 fn search_results_decoder() -> decode.Decoder(SearchResults) {
   use count <- decode.field("count", decode.int)
   use next <- decode.field("next", decode.optional(decode.string))
-  use previous <- decode.field(
-    "previous",
-    decode.optional(decode.string),
-  )
-  use results <- decode.field(
-    "results",
-    decode.list(named_resource_decoder()),
-  )
+  use previous <- decode.field("previous", decode.optional(decode.string))
+  use results <- decode.field("results", decode.list(named_resource_decoder()))
   decode.success(SearchResults(count:, next:, previous:, results:))
 }
 
-pub fn decode_search_results(
-  json_str: String,
-) -> Result(SearchResults, Nil) {
+pub fn decode_search_results(json_str: String) -> Result(SearchResults, Nil) {
   json.parse(json_str, search_results_decoder())
   |> result.map_error(fn(_) { Nil })
 }
@@ -193,9 +193,7 @@ pub opaque type DamageMultiplier(category) {
   DamageMultiplier(Float)
 }
 
-pub fn physical(
-  value: Float,
-) -> Result(DamageMultiplier(Physical), String) {
+pub fn physical(value: Float) -> Result(DamageMultiplier(Physical), String) {
   case value >=. 0.0 {
     True -> Ok(DamageMultiplier(value))
     False -> Error("множитель не может быть отрицательным")
@@ -271,8 +269,7 @@ pub fn format_pokemon_card(pokemon: Pokemon) -> String {
 
 pub fn format_stat_bar(stat: PokemonStat) -> String {
   let name = pad_right(stat.name, 16)
-  let filled =
-    float.round(int.to_float(stat.base_value) *. 15.0 /. 255.0)
+  let filled = float.round(int.to_float(stat.base_value) *. 15.0 /. 255.0)
   let filled = int.min(filled, 15) |> int.max(0)
   let empty = 15 - filled
   let bar =
@@ -291,9 +288,7 @@ pub type PokedexError {
   MissingAbilities
 }
 
-pub fn build_pokedex_entry(
-  json_str: String,
-) -> Result(String, PokedexError) {
+pub fn build_pokedex_entry(json_str: String) -> Result(String, PokedexError) {
   use pokemon <- result.try(
     parse_pokemon(json_str)
     |> result.map_error(fn(_) { InvalidJson }),
