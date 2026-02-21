@@ -279,34 +279,148 @@ type Status {
 
 Это позволяет Gleam-коду естественно взаимодействовать с существующими Erlang-библиотеками.
 
-### Вызов функций с переменным числом аргументов
+### Работа с процессами через FFI
 
-Некоторые Erlang-функции принимают переменное число аргументов. Решение — создать обёртку в Erlang:
+Одно из главных преимуществ BEAM — легковесные процессы. Библиотека `gleam/erlang/process` предоставляет типобезопасные обёртки, но давайте посмотрим, как они устроены:
+
+```gleam
+import gleam/erlang/process.{type Pid}
+
+// Получение PID текущего процесса
+@external(erlang, "erlang", "self")
+pub fn self() -> Pid
+
+// Создание процесса с линком
+@external(erlang, "proc_lib", "spawn_link")
+fn spawn_linked(f: fn() -> anything) -> Pid
+
+// Отправка сообщения процессу
+@external(erlang, "erlang", "send")
+fn send_message(to: Pid, message: anything) -> anything
+
+// Использование
+pub fn example() {
+  let current_pid = self()
+
+  let worker_pid = spawn_linked(fn() {
+    // Код процесса
+    io.println("Worker started!")
+  })
+
+  send_message(worker_pid, "hello")
+}
+```
+
+Эти примеры показывают ключевые примитивы BEAM: `erlang:self/0` возвращает PID текущего процесса, `proc_lib:spawn_link/1` создаёт новый процесс и связывает его с родительским (если один упадёт, другой получит сигнал), `erlang:send/2` отправляет сообщение в mailbox процесса.
+
+### Работа с ETS (Erlang Term Storage)
+
+ETS — встроенная in-memory база данных BEAM. Она позволяет хранить огромные объёмы данных с О(1) доступом:
 
 ```erlang
-% src/my_ffi.erl
--module(my_ffi).
--export([format_string/2]).
+% src/ets_ffi.erl
+-module(ets_ffi).
+-export([new_table/1, insert/3, lookup/2, delete_table/1]).
 
-format_string(Format, Args) ->
-    lists:flatten(io_lib:format(Format, Args)).
+new_table(Name) ->
+    ets:new(binary_to_atom(Name), [set, public, named_table]).
+
+insert(Table, Key, Value) ->
+    ets:insert(Table, {Key, Value}),
+    ok.
+
+lookup(Table, Key) ->
+    case ets:lookup(Table, Key) of
+        [{_, Value}] -> {ok, Value};
+        [] -> {error, nil}
+    end.
+
+delete_table(Table) ->
+    ets:delete(Table),
+    ok.
 ```
 
 ```gleam
-@external(erlang, "my_ffi", "format_string")
-pub fn format(template: String, args: List(Dynamic)) -> String
+import gleam/dynamic.{type Dynamic}
+
+pub type EtsTable
+
+@external(erlang, "ets_ffi", "new_table")
+pub fn new_table(name: String) -> EtsTable
+
+@external(erlang, "ets_ffi", "insert")
+pub fn insert(table: EtsTable, key: String, value: Dynamic) -> Nil
+
+@external(erlang, "ets_ffi", "lookup")
+pub fn lookup(table: EtsTable, key: String) -> Result(Dynamic, Nil)
+
+@external(erlang, "ets_ffi", "delete_table")
+pub fn delete_table(table: EtsTable) -> Nil
 
 // Использование
-import gleam/dynamic
+pub fn cache_example() {
+  let cache = new_table("my_cache")
 
-format("Hello, ~s! You are ~p years old.", [
-  dynamic.from("Alice"),
-  dynamic.from(30),
-])
-// "Hello, Alice! You are 30 years old."
+  insert(cache, "user:1", dynamic.from("Alice"))
+
+  case lookup(cache, "user:1") {
+    Ok(value) -> io.debug(value)
+    Error(_) -> io.println("Not found")
+  }
+
+  delete_table(cache)
+}
 ```
 
-Этот паттерн решает проблему Erlang-функций с переменным числом аргументов: создаём промежуточный Erlang-модуль, который принимает список аргументов и передаёт их в `io_lib:format/2`. Со стороны Gleam это выглядит как обычная функция с фиксированной сигнатурой. `Dynamic` позволяет передавать значения разных типов в одном списке.
+ETS — мощный инструмент для кэширования и совместного состояния между процессами. Таблица создаётся через `ets:new/2` с опциями (здесь `set` означает уникальные ключи, `public` — доступ из любого процесса). `ets:insert/2` добавляет пары ключ-значение, `ets:lookup/2` возвращает значение или пустой список.
+
+### Calling NIFs (Native Implemented Functions)
+
+NIFs позволяют вызывать код на C, Rust или Zig из Erlang. Пример с Rust NIF через библиотеку `rustler`:
+
+```erlang
+% src/math_nif.erl
+-module(math_nif).
+-export([fast_fibonacci/1]).
+-on_load(init/0).
+
+init() ->
+    ok = erlang:load_nif("./priv/math_nif", 0).
+
+fast_fibonacci(_N) ->
+    erlang:nif_error("NIF library not loaded").
+```
+
+```rust
+// native/math_nif/src/lib.rs (Rust)
+#[rustler::nif]
+fn fast_fibonacci(n: i64) -> i64 {
+    if n <= 1 {
+        n
+    } else {
+        let mut a = 0;
+        let mut b = 1;
+        for _ in 2..=n {
+            let temp = a + b;
+            a = b;
+            b = temp;
+        }
+        b
+    }
+}
+
+rustler::init!("math_nif", [fast_fibonacci]);
+```
+
+```gleam
+@external(erlang, "math_nif", "fast_fibonacci")
+pub fn fast_fibonacci(n: Int) -> Int
+
+// Использование
+fast_fibonacci(100)  // Выполняется в нативном коде
+```
+
+NIFs выполняются напрямую в нативном коде (не на BEAM VM), что даёт огромный прирост производительности для тяжёлых вычислений. `erlang:load_nif/2` загружает скомпилированную `.so` библиотеку. **Важно:** NIF блокирует scheduler при выполнении — используйте их осторожно для задач, которые выполняются быстро (<1ms), иначе применяйте Dirty NIFs.
 
 ## Упражнения
 
@@ -419,6 +533,39 @@ pub fn ensure_dir(path: String) -> Result(Nil, String)
 
 **Подсказка:** используйте `@external(erlang, "filelib", "ensure_dir")`. Эта функция требует путь к файлу (не директории!), поэтому добавьте `"/"` в конец пути.
 
+### 9. simple_ets_cache — работа с ETS (Сложное)
+
+Реализуйте простой кэш на ETS:
+
+```gleam
+pub type Cache
+
+pub fn new_cache(name: String) -> Cache
+pub fn cache_put(cache: Cache, key: String, value: String) -> Nil
+pub fn cache_get(cache: Cache, key: String) -> Result(String, Nil)
+pub fn cache_delete(cache: Cache) -> Nil
+```
+
+**Подсказка:** создайте `ets_ffi.erl` аналогично примеру из главы. Используйте `ets:new/2`, `ets:insert/2`, `ets:lookup/2`, `ets:delete/1`.
+
+### 10. spawn_and_receive — процессы и сообщения (Сложное)
+
+Реализуйте функцию, запускающую процесс и получающую от него сообщение:
+
+```gleam
+pub fn spawn_echo() -> String
+```
+
+Функция должна:
+1. Создать процесс, который отправляет сообщение `"echo"` родителю
+2. Получить это сообщение
+3. Вернуть его как строку
+
+**Подсказка:**
+- Используйте `process.self()` для получения родительского PID
+- Используйте `process.start(fn() { ... }, True)` для создания процесса
+- Используйте `process.receive(selector, timeout)` для получения сообщения
+
 ## Заключение
 
 В этой главе мы изучили взаимодействие Gleam с Erlang:
@@ -429,7 +576,10 @@ pub fn ensure_dir(path: String) -> Result(Nil, String)
 - **Атомы** — уникальные идентификаторы с безопасным использованием
 - **Charlist** — совместимость со строками Erlang
 - **Системное программирование** — файлы, процессы, переменные окружения
+- **Продвинутые техники** — работа с процессами, ETS и NIFs
 
 FFI к Erlang открывает доступ к мощной экосистеме BEAM — от работы с файлами и сетью до распределённых систем и OTP. При этом Gleam сохраняет типобезопасность и выразительность.
+
+> **Что дальше:** В главе 10 мы изучим высокоуровневые абстракции OTP для работы с процессами — акторы, супервизоры и философию «Let it crash». Низкоуровневые FFI-функции из этой главы (spawn, send, ETS) станут фундаментом для понимания того, как работают типобезопасные обёртки `gleam/otp/actor` и `gleam/otp/static_supervisor`.
 
 В следующей главе мы переключимся на JavaScript-таргет и изучим FFI для веб-разработки и фронтенд-интеграции.

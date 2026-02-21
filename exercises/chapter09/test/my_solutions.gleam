@@ -153,3 +153,124 @@ pub type Event
 pub fn event_target_value(event: Event) -> Result(String, Nil) {
   todo
 }
+
+// ============================================================
+// Упражнение 9: varargs_logger — console.log с разными типами
+// ============================================================
+
+/// Логирует множество значений разных типов в консоль.
+///
+/// Подсказка:
+/// - Создайте JavaScript функцию, принимающую массив
+/// - Используйте spread operator: console.log(...values)
+pub fn log_values(values: List(Dynamic)) -> Nil {
+  todo
+}
+
+// ============================================================
+// Упражнение 10: math_operations — varargs для математики
+// ============================================================
+
+/// Суммирует все числа в списке.
+///
+/// Подсказка:
+/// export function sumAll(numbers) {
+///   return numbers.reduce((a, b) => a + b, 0);
+/// }
+pub fn sum_all(numbers: List(Float)) -> Float {
+  todo
+}
+
+/// Перемножает все числа в списке.
+///
+/// Подсказка: аналогично sum_all, но с умножением
+pub fn multiply_all(numbers: List(Float)) -> Float {
+  todo
+}
+
+// ============================================================
+// Упражнение 11: js_date_wrapper — работа с Date классом
+// ============================================================
+
+/// Непрозрачный тип для JavaScript Date.
+pub type JSDate
+
+/// Создаёт новую дату (текущее время).
+///
+/// Подсказка: export function newDate() { return new Date(); }
+pub fn new_date() -> JSDate {
+  todo
+}
+
+/// Создаёт дату из ISO-строки.
+/// Возвращает Error(Nil) если строка невалидна.
+///
+/// Подсказка:
+/// - const d = new Date(isoString);
+/// - Проверьте isNaN(d.getTime()) для валидности
+pub fn date_from_string(iso: String) -> Result(JSDate, Nil) {
+  todo
+}
+
+/// Добавляет дни к дате.
+///
+/// Подсказка:
+/// const newDate = new Date(date);
+/// newDate.setDate(newDate.getDate() + days);
+/// return newDate;
+pub fn add_days(date: JSDate, days: Int) -> JSDate {
+  todo
+}
+
+/// Форматирует дату в строку.
+///
+/// Подсказка: используйте date.toLocaleDateString() или toISOString()
+pub fn format_date(date: JSDate, format: String) -> String {
+  todo
+}
+
+// ============================================================
+// Упражнение 12: canvas_wrapper — обёртка для Canvas API
+// ============================================================
+
+/// Непрозрачный тип для Canvas контекста.
+pub type Canvas
+
+/// Получает Canvas контекст по ID элемента.
+/// Возвращает Error(Nil) если элемент не найден.
+///
+/// Подсказка:
+/// const elem = document.getElementById(elementId);
+/// if (!elem) return {type: "Error", 0: undefined};
+/// const ctx = elem.getContext('2d');
+/// if (!ctx) return {type: "Error", 0: undefined};
+/// return {type: "Ok", 0: ctx};
+pub fn get_canvas(element_id: String) -> Result(Canvas, Nil) {
+  todo
+}
+
+/// Рисует закрашенный прямоугольник.
+///
+/// Подсказка:
+/// canvas.fillStyle = color;
+/// canvas.fillRect(x, y, w, h);
+/// return canvas;
+pub fn fill_rect(
+  canvas: Canvas,
+  x: Float,
+  y: Float,
+  w: Float,
+  h: Float,
+  color: String,
+) -> Canvas {
+  todo
+}
+
+/// Очищает весь canvas.
+///
+/// Подсказка:
+/// canvas.clearRect(0, 0, canvas.canvas.width, canvas.canvas.height);
+/// return canvas;
+pub fn clear_canvas(canvas: Canvas) -> Canvas {
+  todo
+}

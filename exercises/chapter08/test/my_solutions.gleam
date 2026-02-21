@@ -125,3 +125,55 @@ pub fn measure_time(f: fn() -> a) -> #(a, Int) {
 pub fn ensure_dir(path: String) -> Result(Nil, String) {
   todo as "Упражнение 8: реализуйте ensure_dir"
 }
+
+// ============================================================
+// Упражнение 9: simple_ets_cache — работа с ETS
+// ============================================================
+
+/// Непрозрачный тип для ETS-кэша.
+pub type Cache
+
+/// Создаёт новый ETS-кэш с именем.
+///
+/// Подсказка: создайте ets_ffi.erl с функцией new_table/1,
+/// использующей ets:new(binary_to_atom(Name), [set, public, named_table])
+pub fn new_cache(name: String) -> Cache {
+  todo as "Упражнение 9: реализуйте new_cache"
+}
+
+/// Добавляет пару ключ-значение в кэш.
+///
+/// Подсказка: используйте ets:insert(Table, {Key, Value})
+pub fn cache_put(cache: Cache, key: String, value: String) -> Nil {
+  todo as "Упражнение 9: реализуйте cache_put"
+}
+
+/// Получает значение из кэша по ключу.
+///
+/// Подсказка: ets:lookup(Table, Key) возвращает [{Key, Value}] или []
+pub fn cache_get(cache: Cache, key: String) -> Result(String, Nil) {
+  todo as "Упражнение 9: реализуйте cache_get"
+}
+
+/// Удаляет кэш.
+///
+/// Подсказка: используйте ets:delete(Table)
+pub fn cache_delete(cache: Cache) -> Nil {
+  todo as "Упражнение 9: реализуйте cache_delete"
+}
+
+// ============================================================
+// Упражнение 10: spawn_and_receive — процессы и сообщения
+// ============================================================
+
+/// Создаёт процесс, который отправляет сообщение "echo" родителю,
+/// получает это сообщение и возвращает его.
+///
+/// Подсказка:
+/// 1. Используйте process.self() для получения родительского PID
+/// 2. Используйте process.start(fn() { ... }, True) для создания процесса
+/// 3. В процессе-потомке отправьте сообщение через process.send(parent_pid, "echo")
+/// 4. В родителе получите сообщение через process.receive(selector, timeout)
+pub fn spawn_echo() -> String {
+  todo as "Упражнение 10: реализуйте spawn_echo"
+}

@@ -18,6 +18,8 @@
 
 ## JavaScript-таргет Gleam
 
+> **Связь с главой 9:** В главе 9 мы изучили JavaScript FFI — вызов JavaScript-функций через `@external`, работу с DOM API, промисами и классами. Lustre абстрагирует всю эту низкоуровневую работу: вместо прямых вызовов `document.getElementById` и `addEventListener` вы работаете с виртуальным DOM и декларативными событиями. Однако знание FFI из главы 9 пригодится для интеграции сторонних JavaScript-библиотек с Lustre.
+
 Lustre работает в браузере — это JavaScript-среда. Gleam компилируется как для Erlang, так и для JavaScript:
 
 ```bash
@@ -38,9 +40,35 @@ target = "javascript"
 
 > **Важно:** большинство модулей из `gleam_erlang` и `gleam_otp` не работают на JS-таргете. Lustre-проекты используют `gleam_stdlib` и JS-совместимые библиотеки.
 
-## The Elm Architecture
+## The Elm Architecture (TEA)
 
-Lustre реализует Elm Architecture (TEA) — архитектурный паттерн с однонаправленным потоком данных:
+### История и философия
+
+The Elm Architecture (TEA) — архитектурный паттерн, разработанный **Evan Czaplicki** для языка Elm в 2012 году. Паттерн возник как решение проблемы управления состоянием в функциональном языке без мутаций и побочных эффектов.
+
+Ключевая идея TEA: **однонаправленный поток данных** (unidirectional data flow). В отличие от двунаправленного биндинга (MVC, MVVM), где изменения могут распространяться в обе стороны, TEA строго контролирует порядок обновлений:
+
+```text
+Пользователь → Событие → Сообщение → Update → Новая Модель → View → UI
+              ↑                                                        │
+              └────────────────────────────────────────────────────────┘
+```
+
+Это делает состояние **предсказуемым**: одна и та же последовательность сообщений всегда приводит к одному и тому же состоянию. Нет скрытых мутаций, нет «action at a distance».
+
+### Влияние TEA на индустрию
+
+TEA вдохновил множество фреймворков и архитектур:
+
+- **Redux** (JavaScript) — почти прямая адаптация TEA для React, созданная Dan Abramov
+- **Elmish** (F#) — TEA для .NET экосистемы
+- **SwiftUI** (Swift) — Apple использовала идеи TEA для декларативного UI
+- **Iced** (Rust) — GUI-фреймворк для Rust на основе TEA
+- **Lustre** (Gleam) — то, что мы изучаем в этой главе
+
+### Компоненты TEA
+
+Lustre реализует классическую Elm Architecture с тремя компонентами:
 
 ```text
          ┌─────────────────────────────────┐
@@ -61,11 +89,53 @@ Lustre реализует Elm Architecture (TEA) — архитектурный 
                                 (события)
 ```
 
-Три компонента:
+**1. Model** — состояние приложения (иммутабельные данные)
+```gleam
+type Model {
+  Model(count: Int, todos: List(String))
+}
+```
 
-1. **Model** — состояние приложения (иммутабельные данные)
-2. **Update** — чистая функция `fn(Model, Msg) -> Model`, которая создаёт новое состояние
-3. **View** — чистая функция `fn(Model) -> Element(Msg)`, которая строит виртуальный DOM
+**2. Msg** — алгебраический тип всех возможных действий
+```gleam
+type Msg {
+  Increment
+  AddTodo(String)
+  DeleteTodo(Int)
+}
+```
+
+**3. Update** — чистая функция `fn(Model, Msg) -> Model`
+```gleam
+fn update(model: Model, msg: Msg) -> Model {
+  case msg {
+    Increment -> Model(..model, count: model.count + 1)
+    // ...
+  }
+}
+```
+
+**4. View** — чистая функция `fn(Model) -> Element(Msg)`
+```gleam
+fn view(model: Model) -> Element(Msg) {
+  html.div([], [
+    html.h1([], [element.text("Count: " <> int.to_string(model.count))]),
+    html.button([event.on_click(Increment)], [element.text("+")])
+  ])
+}
+```
+
+### Преимущества TEA
+
+**Типобезопасность.** Система типов гарантирует, что каждое сообщение обработано — забытый case приведёт к ошибке компиляции.
+
+**Предсказуемость.** Чистые функции `update` и `view` всегда дают один результат для одного входа. Нет скрытого состояния.
+
+**Тестируемость.** Логика приложения — чистые функции без I/O. Тесты просты: `assert update(model, Increment) == Model(count: 1)`.
+
+**Time-travel debugging.** Последовательность сообщений полностью описывает историю приложения. Можно «прокручивать» состояние назад и вперёд.
+
+**Масштабируемость.** Локальные изменения не ломают удалённые части приложения — каждое сообщение явно объявлено в типе `Msg`.
 
 Нет мутаций, нет глобального состояния — только чистые функции.
 
@@ -369,6 +439,8 @@ pub fn main() {
 
 ### lustre_http — HTTP-запросы
 
+> **Из главы 9:** `lustre_http` под капотом использует JavaScript `Promise` (промисы), которые мы изучили в главе 9. Функция `fetch()` возвращает промис, который разрешается в `Response`, затем преобразуется в JSON. Lustre оборачивает это в типобезопасный эффект.
+
 ```gleam
 import lustre/effect.{type Effect}
 import lustre_http
@@ -471,7 +543,7 @@ pub fn register() {
 
 ## Server Components
 
-Lustre поддерживает серверные компоненты — UI-логика работает на BEAM-сервере, браузеру нужен лишь ~10kb клиентский рантайм.
+Lustre поддерживает **серверные компоненты** — революционный подход, где UI-логика работает на BEAM-сервере, а браузеру нужен лишь ~10kb клиентский рантайм для применения патчей.
 
 ### Как работают Server Components
 
@@ -481,21 +553,577 @@ Lustre поддерживает серверные компоненты — UI-�
 │  ~10kb JS   │ ◄─── патчи ──── │  Lustre-процесс  │
 │  рантайм    │ ──── события ►  │  (OTP-актор)     │
 └─────────────┘                 └──────────────────┘
+        ▲                                │
+        │         JSON-патчи            ▼
+    DOM updates          {type: "set_attribute", ...}
 ```
 
-При каждом действии пользователя:
+**Жизненный цикл:**
 
-1. Браузер отправляет событие по WebSocket на сервер
-2. Сервер запускает `update`, получает новый Model
-3. Сервер вычисляет diff виртуального DOM
-4. Браузер получает минимальный патч и применяет его
+1. **Подключение:** Браузер открывает WebSocket к серверу и запрашивает начальный HTML
+2. **Инициализация:** Сервер создаёт OTP-актор (процесс) для этого клиента, вызывает `init`, возвращает начальный рендер
+3. **Взаимодействие:** Пользователь кликает кнопку → браузер отправляет событие по WebSocket → сервер вызывает `update(model, msg)` → вычисляет diff → отправляет патч браузеру
+4. **Патчинг:** Браузер применяет патч к реальному DOM (минимальные изменения)
+5. **Отключение:** WebSocket закрывается → OTP-актор останавливается (супервизор может перезапустить при сбое)
 
-Server Components идеальны для:
+### Пример: Real-Time Dashboard
 
-- Дашбордов с real-time данными
-- Совместного редактирования
-- Чатов и уведомлений
-- Приложений, где важен SEO и минимальный JS
+```gleam
+import gleam/int
+import gleam/erlang/process
+import lustre
+import lustre/element.{type Element}
+import lustre/element/html
+import lustre/attribute
+import lustre/effect.{type Effect}
+
+type Model {
+  Model(connected_users: Int, requests_per_second: Int, uptime_seconds: Int)
+}
+
+type Msg {
+  Tick
+  UserConnected
+  UserDisconnected
+}
+
+fn init(_flags) -> #(Model, Effect(Msg)) {
+  #(
+    Model(connected_users: 0, requests_per_second: 0, uptime_seconds: 0),
+    // Запускаем таймер — каждую секунду отправляем Tick
+    effect.from(fn(dispatch) {
+      process.send_after(process.self(), 1000, Tick)
+      dispatch(Tick)
+    }),
+  )
+}
+
+fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
+  case msg {
+    Tick -> #(
+      Model(
+        ..model,
+        uptime_seconds: model.uptime_seconds + 1,
+        requests_per_second: random_int(50, 200),
+      ),
+      // Следующий тик через 1 секунду
+      effect.from(fn(dispatch) {
+        process.send_after(process.self(), 1000, Tick)
+      }),
+    )
+    UserConnected -> #(
+      Model(..model, connected_users: model.connected_users + 1),
+      effect.none(),
+    )
+    UserDisconnected -> #(
+      Model(..model, connected_users: model.connected_users - 1),
+      effect.none(),
+    )
+  }
+}
+
+fn view(model: Model) -> Element(Msg) {
+  html.div([attribute.class("dashboard")], [
+    html.h1([], [element.text("Server Dashboard")]),
+    html.div([attribute.class("metrics")], [
+      metric("Connected Users", int.to_string(model.connected_users)),
+      metric("Requests/sec", int.to_string(model.requests_per_second)),
+      metric("Uptime", format_uptime(model.uptime_seconds)),
+    ]),
+  ])
+}
+
+fn metric(label: String, value: String) -> Element(msg) {
+  html.div([attribute.class("metric")], [
+    html.div([attribute.class("label")], [element.text(label)]),
+    html.div([attribute.class("value")], [element.text(value)]),
+  ])
+}
+
+// Запуск server component
+pub fn main() {
+  lustre.start_server_component(lustre.application(init, update, view))
+}
+```
+
+Каждый подключённый пользователь получает **собственный процесс-актор** на сервере. Когда таймер срабатывает, `update` вычисляет новое состояние, Lustre рендерит виртуальный DOM, вычисляет diff и отправляет только изменения в браузер.
+
+### Сравнение с аналогами
+
+| | **Lustre Server Components** | **Phoenix LiveView** | **Blazor Server** |
+|---|---|---|---|
+| **Язык** | Gleam | Elixir | C# |
+| **Платформа** | BEAM VM | BEAM VM | .NET CLR |
+| **Транспорт** | WebSocket/SSE | WebSocket | SignalR (WebSocket) |
+| **Процесс на клиента** | ✅ OTP-актор | ✅ GenServer | ❌ Общий поток |
+| **Типобезопасность** | ✅ Статическая | ⚠️ Динамическая | ✅ Статическая |
+| **Размер клиента** | ~10kb | ~30kb | ~500kb |
+| **Отказоустойчивость** | ✅ Let it crash | ✅ Let it crash | ⚠️ Требует настройки |
+
+**Phoenix LiveView** (Elixir) — прямой вдохновитель Lustre Server Components. Обе технологии используют BEAM VM и один процесс на подключение. Основное отличие: Gleam даёт статическую типизацию, а Elixir — динамическую.
+
+**Blazor Server** (C#/.NET) — похожий подход, но без изоляции процессов. Все клиенты обслуживаются в одном .NET процессе, что ограничивает отказоустойчивость.
+
+### Trade-offs: когда использовать Server Components?
+
+**✅ Используйте Server Components когда:**
+
+- **Real-time данные** — дашборды, мониторинг, чаты, совместное редактирование
+- **Минимальный JavaScript** — важен SEO, быстрая загрузка на медленных сетях
+- **Доступ к серверу** — нужен прямой доступ к БД, файловой системе, внутренним API
+- **Безопасность** — бизнес-логика остаётся на сервере, не утекает в клиентский бандл
+- **Есть BEAM-инфраструктура** — уже используете Erlang/Elixir/Gleam на бэкенде
+
+**❌ Избегайте Server Components когда:**
+
+- **Высокая латентность** — пользователи из разных континентов (каждый клик = round-trip)
+- **Офлайн-режим** — приложение должно работать без сети (PWA, мобильные приложения)
+- **Интенсивная интерактивность** — анимации, drag-and-drop, игры (лаг будет заметен)
+- **Масштабирование горизонтально** — миллионы одновременных пользователей (требуется sticky sessions или Redis Pub/Sub)
+- **Статический хостинг** — нельзя использовать серверную логику (GitHub Pages, Netlify без функций)
+
+**Гибридный подход:** используйте Server Components для административных панелей и дашбордов, а классические SPA (CSR) — для публичного интерфейса с высокой интерактивностью.
+
+## Full-Stack приложения: Lustre + Wisp
+
+Lustre позволяет создавать **full-stack приложения** на Gleam: Wisp (Erlang-таргет) на сервере, Lustre (JavaScript-таргет) в браузере. Одна кодовая база, два таргета, общие типы.
+
+### Структура монорепозитория
+
+Рекомендуемая структура для full-stack проекта:
+
+```text
+my_app/
+├── client/              # Lustre SPA (target = javascript)
+│   ├── gleam.toml
+│   ├── src/
+│   │   ├── client.gleam
+│   │   └── client_ffi.mjs
+│   └── index.html
+├── server/              # Wisp API (target = erlang)
+│   ├── gleam.toml
+│   ├── src/
+│   │   ├── server.gleam
+│   │   └── routes.gleam
+│   └── priv/
+│       └── static/      # Собранный клиент
+└── shared/              # Общие типы и функции
+    ├── gleam.toml
+    └── src/
+        ├── models.gleam  # Общие типы данных
+        └── codecs.gleam  # JSON-кодеки
+```
+
+Три независимых Gleam-проекта:
+
+1. **client** — JavaScript-таргет, зависит от `lustre` и `shared`
+2. **server** — Erlang-таргет, зависит от `wisp`, `mist`, `pog` и `shared`
+3. **shared** — без таргета (или оба), экспортирует типы и функции
+
+### Общие типы (shared/src/models.gleam)
+
+```gleam
+// Общие типы для клиента и сервера
+pub type Todo {
+  Todo(id: Int, text: String, completed: Bool)
+}
+
+pub type User {
+  User(id: Int, name: String, email: String)
+}
+
+pub type ApiResponse(data) {
+  Success(data: data)
+  Error(message: String)
+}
+```
+
+Эти типы компилируются и для JavaScript (клиент), и для Erlang (сервер) — гарантируется согласованность.
+
+### JSON-кодеки (shared/src/codecs.gleam)
+
+```gleam
+import gleam/json
+import gleam/dynamic/decode
+import shared/models.{type Todo}
+
+// Энкодинг: Gleam → JSON (для отправки с сервера)
+pub fn encode_todo(todo: Todo) -> json.Json {
+  json.object([
+    #("id", json.int(todo.id)),
+    #("text", json.string(todo.text)),
+    #("completed", json.bool(todo.completed)),
+  ])
+}
+
+pub fn encode_todos(todos: List(Todo)) -> json.Json {
+  json.array(todos, encode_todo)
+}
+
+// Декодинг: JSON → Gleam (для чтения на клиенте)
+pub fn decode_todo(value: dynamic.Dynamic) -> Result(Todo, decode.DecodeErrors) {
+  decode.into({
+    use id <- decode.field("id", decode.int)
+    use text <- decode.field("text", decode.string)
+    use completed <- decode.field("completed", decode.bool)
+    models.Todo(id:, text:, completed:)
+  })
+  |> decode.from(value)
+}
+
+pub fn decode_todos(value: dynamic.Dynamic) -> Result(List(Todo), decode.DecodeErrors) {
+  decode.list(decode_todo) |> decode.from(value)
+}
+```
+
+Кодеки живут в `shared` и используются на обеих сторонах — сервер энкодит, клиент декодит.
+
+### Сервер: API-роуты (server/src/routes.gleam)
+
+```gleam
+import gleam/http
+import gleam/json
+import wisp
+import shared/codecs
+import shared/models.{type Todo, Todo}
+
+// Получить все TODO
+pub fn get_todos(req: wisp.Request) -> wisp.Response {
+  // В реальном приложении — запрос к БД
+  let todos = [
+    Todo(id: 1, text: "Изучить Lustre", completed: True),
+    Todo(id: 2, text: "Построить full-stack приложение", completed: False),
+  ]
+
+  let json_body = codecs.encode_todos(todos) |> json.to_string()
+
+  wisp.response(200)
+  |> wisp.set_header("content-type", "application/json")
+  |> wisp.set_body(wisp.Text(json_body))
+}
+
+// Создать новое TODO
+pub fn create_todo(req: wisp.Request) -> wisp.Response {
+  use body <- wisp.require_string_body(req)
+
+  case json.parse(body, codecs.decode_todo) {
+    Ok(todo) -> {
+      // Сохранить в БД...
+      let response = codecs.encode_todo(todo) |> json.to_string()
+      wisp.json_response(response, 201)
+    }
+    Error(_) -> wisp.bad_request()
+  }
+}
+```
+
+Сервер использует `shared/codecs` для сериализации данных в JSON.
+
+### Клиент: Lustre SPA (client/src/client.gleam)
+
+```gleam
+import gleam/http
+import gleam/json
+import gleam/result
+import lustre
+import lustre/effect.{type Effect}
+import lustre/element.{type Element}
+import lustre/element/html
+import lustre_http
+import shared/models.{type Todo}
+import shared/codecs
+
+type Model {
+  Model(todos: List(Todo), loading: Bool)
+}
+
+type Msg {
+  FetchTodos
+  TodosFetched(Result(List(Todo), lustre_http.HttpError))
+}
+
+fn init(_) -> #(Model, Effect(Msg)) {
+  #(
+    Model(todos: [], loading: True),
+    fetch_todos(),
+  )
+}
+
+fn fetch_todos() -> Effect(Msg) {
+  lustre_http.get(
+    "/api/todos",
+    lustre_http.expect_json(codecs.decode_todos, TodosFetched),
+  )
+}
+
+fn update(model: Model, msg: Msg) -> #(Model, Effect(Msg)) {
+  case msg {
+    FetchTodos -> #(Model(..model, loading: True), fetch_todos())
+
+    TodosFetched(Ok(todos)) -> #(
+      Model(..model, todos:, loading: False),
+      effect.none(),
+    )
+
+    TodosFetched(Error(_)) -> #(
+      Model(..model, loading: False),
+      effect.none(),
+    )
+  }
+}
+
+fn view(model: Model) -> Element(Msg) {
+  html.div([], [
+    html.h1([], [element.text("TODO List")]),
+    case model.loading {
+      True -> html.p([], [element.text("Загрузка...")])
+      False -> render_todos(model.todos)
+    },
+  ])
+}
+
+fn render_todos(todos: List(Todo)) -> Element(msg) {
+  html.ul([], list.map(todos, render_todo))
+}
+
+fn render_todo(todo: Todo) -> Element(msg) {
+  html.li([], [element.text(todo.text)])
+}
+
+pub fn main() {
+  let app = lustre.application(init, update, view)
+  let assert Ok(_) = lustre.start(app, "#app", Nil)
+}
+```
+
+Клиент использует те же `shared/models` и `shared/codecs` — полная типобезопасность от сервера до браузера.
+
+### Сборка и развёртывание
+
+**1. Соберите клиента:**
+
+```bash
+cd client
+gleam build --target javascript
+# Результат в build/dev/javascript/client/client.mjs
+```
+
+**2. Скопируйте клиентский бандл в `server/priv/static/`:**
+
+```bash
+cp build/dev/javascript/client/client.mjs ../server/priv/static/
+```
+
+**3. Соберите сервер:**
+
+```bash
+cd ../server
+gleam build
+gleam run
+```
+
+**4. Настройте роуты для статики:**
+
+```gleam
+// server/src/server.gleam
+import wisp
+
+pub fn handle_request(req: wisp.Request) -> wisp.Response {
+  use <- wisp.serve_static(req, under: "/static", from: "/priv/static")
+
+  case wisp.path_segments(req) {
+    [] -> index_page()  // Отдаёт HTML с <script src="/static/client.mjs">
+    ["api", "todos"] -> routes.get_todos(req)
+    _ -> wisp.not_found()
+  }
+}
+```
+
+### Автоматизация сборки
+
+Добавьте скрипт в `package.json` или `justfile`:
+
+```json
+{
+  "scripts": {
+    "build:client": "cd client && gleam build",
+    "build:server": "cd server && gleam build",
+    "build": "npm run build:client && cp client/build/dev/javascript/client/client.mjs server/priv/static/ && npm run build:server",
+    "dev": "npm run build && cd server && gleam run"
+  }
+}
+```
+
+Теперь `npm run dev` собирает оба проекта и запускает сервер.
+
+### Преимущества full-stack Gleam
+
+✅ **Одна кодовая база** — один язык, одни инструменты, одна система типов
+✅ **Общие типы** — изменения в модели сразу видны и на клиенте, и на сервере
+✅ **Типобезопасные API** — декодеры гарантируют, что JSON соответствует типам
+✅ **Рефакторинг без страха** — переименовали поле? Компилятор найдёт все проблемы
+✅ **Кодогенерация не нужна** — никаких OpenAPI, Swagger, GraphQL Codegen
+
+## Server-Side Rendering (SSR)
+
+Lustre также поддерживает **статический серверный рендеринг** — генерацию HTML на сервере без интерактивности. Это полезно для:
+
+- SEO-оптимизации (поисковые боты видят готовый HTML)
+- Быстрой первой отрисовки (Time to First Paint)
+- Статических страниц (блоги, документация, лендинги)
+- Прогрессивного улучшения (Progressive Enhancement)
+
+### Рендеринг элементов в HTML
+
+Lustre предоставляет две функции для конвертации виртуального DOM в строку:
+
+```gleam
+import lustre/element
+
+// Рендерит элемент в HTML-фрагмент
+element.to_string(my_element)
+// "<div><h1>Hello</h1></div>"
+
+// Рендерит элемент в полный HTML-документ с <!DOCTYPE>
+element.to_document_string(my_element)
+// "<!DOCTYPE html><html><head>...</head><body>...</body></html>"
+```
+
+### Пример: SSR-роут в Wisp
+
+```gleam
+import gleam/int
+import lustre/element
+import lustre/element/html
+import lustre/attribute
+import wisp
+
+type Model {
+  Model(count: Int)
+}
+
+fn view(model: Model) -> element.Element(msg) {
+  html.html([], [
+    html.head([], [
+      html.title([], [element.text("Counter App")]),
+      html.meta([attribute.attribute("charset", "utf-8")]),
+    ]),
+    html.body([], [
+      html.h1([], [element.text("Server-Rendered Counter")]),
+      html.p([], [element.text("Count: " <> int.to_string(model.count))]),
+      html.a([attribute.href("/increment")], [element.text("Increment")]),
+    ]),
+  ])
+}
+
+pub fn handle_request(req: wisp.Request) -> wisp.Response {
+  case wisp.path_segments(req) {
+    [] -> {
+      let model = Model(count: 0)
+      let html = view(model) |> element.to_document_string()
+      wisp.html_response(html, 200)
+    }
+    ["increment"] -> {
+      let model = Model(count: 1)
+      let html = view(model) |> element.to_document_string()
+      wisp.html_response(html, 200)
+    }
+    _ -> wisp.not_found()
+  }
+}
+```
+
+Здесь сервер рендерит HTML на каждый запрос — нет JavaScript, нет интерактивности. Страница полностью статична.
+
+### Гидратация (Hydration)
+
+Чтобы добавить интерактивность к серверно-отрендеренному HTML, используется **гидратация** — процесс «оживления» статического HTML клиентским JavaScript.
+
+Идея: сервер рендерит начальное состояние, клиент подхватывает его и продолжает работу как SPA.
+
+**Шаг 1:** Сериализуем модель в JSON и встраиваем в HTML
+
+```gleam
+import gleam/json
+
+fn view_with_state(model: Model) -> element.Element(msg) {
+  html.html([], [
+    html.head([], [...]),
+    html.body([], [
+      html.div([attribute.id("app")], [
+        // Серверный рендер начального состояния
+        render_counter(model),
+      ]),
+
+      // Встраиваем модель как JSON
+      html.script([], [
+        element.text(
+          "window.__INITIAL_STATE__ = "
+          <> json.to_string(model_to_json(model))
+          <> ";"
+        ),
+      ]),
+
+      // Подключаем клиентский бандл
+      html.script([attribute.src("/static/app.js")], []),
+    ]),
+  ])
+}
+
+fn model_to_json(model: Model) -> json.Json {
+  json.object([
+    #("count", json.int(model.count)),
+  ])
+}
+```
+
+**Шаг 2:** На клиенте читаем `__INITIAL_STATE__` и инициализируем приложение
+
+```gleam
+// client.gleam (компилируется в JavaScript)
+import lustre
+import gleam/dynamic/decode
+
+@external(javascript, "./client_ffi.mjs", "getInitialState")
+fn get_initial_state() -> dynamic.Dynamic
+
+fn init(_flags) -> Model {
+  case decode_model(get_initial_state()) {
+    Ok(model) -> model
+    Error(_) -> Model(count: 0)  // Fallback
+  }
+}
+
+pub fn main() {
+  let app = lustre.simple(init, update, view)
+  let assert Ok(_) = lustre.start(app, "#app", Nil)
+}
+```
+
+```javascript
+// client_ffi.mjs
+export function getInitialState() {
+  return window.__INITIAL_STATE__ || {};
+}
+```
+
+Теперь сервер рендерит начальный HTML (быстрая первая отрисовка), а клиент подхватывает состояние и продолжает работу (интерактивность).
+
+### SSR vs CSR vs Server Components
+
+| Подход | Где рендер | Где логика | Интерактивность | SEO |
+|--------|-----------|-----------|----------------|-----|
+| **CSR (SPA)** | Браузер | Браузер | Мгновенная | ❌ Требует JS |
+| **SSR + гидратация** | Сервер → Браузер | Браузер | После загрузки | ✅ Готовый HTML |
+| **Server Components** | Сервер | Сервер | Через WebSocket | ✅ Готовый HTML |
+| **Статический SSR** | Сервер | — | Нет | ✅ Готовый HTML |
+
+Выбор зависит от приоритетов:
+
+- **CSR** — максимальная интерактивность, не нужен сервер
+- **SSR + гидратация** — баланс SEO и интерактивности
+- **Server Components** — real-time, минимальный JS, но требует постоянного соединения
+- **Статический SSR** — максимальная производительность, но без интерактивности
 
 ## Проект: TODO-приложение
 
@@ -724,6 +1352,71 @@ pub fn counter_update(model: Int, msg: CounterMsg) -> Int {
 - Отметкой выполнения (чекбокс)
 - Тремя фильтрами: Все / Активные / Завершённые
 
+---
+
+**Упражнение 11.6** (Сложное, интеграция FFI): Lustre + date-fns
+
+> **Применение главы 9:** Это упражнение требует знаний из главы 9 (JavaScript FFI, классы и библиотеки).
+
+Интегрируйте JavaScript-библиотеку `date-fns` в Lustre-приложение:
+
+1. Установите `date-fns`: `npm install date-fns`
+2. Создайте FFI-модуль `src/date_ffi.mjs`:
+
+```javascript
+import { format, addDays, differenceInDays } from 'date-fns';
+
+export function formatDate(date, pattern) {
+  return format(date, pattern);
+}
+
+export function addDays(date, days) {
+  return addDays(date, days);
+}
+
+export function now() {
+  return new Date();
+}
+
+export function differenceInDays(dateLeft, dateRight) {
+  return differenceInDays(dateLeft, dateRight);
+}
+```
+
+3. Создайте Gleam-обёртку `src/date_utils.gleam`:
+
+```gleam
+pub type JSDate
+
+@external(javascript, "./date_ffi.mjs", "now")
+pub fn now() -> JSDate
+
+@external(javascript, "./date_ffi.mjs", "formatDate")
+pub fn format_date(date: JSDate, pattern: String) -> String
+
+@external(javascript, "./date_ffi.mjs", "addDays")
+pub fn add_days(date: JSDate, days: Int) -> JSDate
+
+@external(javascript, "./date_ffi.mjs", "differenceInDays")
+pub fn difference_in_days(date_left: JSDate, date_right: JSDate) -> Int
+```
+
+4. Реализуйте приложение, которое:
+   - Показывает текущую дату в формате `"yyyy-MM-dd"`
+   - Позволяет добавить/вычесть дни (кнопки "+1 день", "-1 день")
+   - Показывает разницу в днях от сегодняшней даты
+
+**Ожидаемый результат:**
+
+```text
+Текущая дата: 2026-02-21
+Выбранная дата: 2026-02-25 (+4 дня от сегодня)
+
+[−1 день] [Сегодня] [+1 день]
+```
+
+**Подсказка:** модель — `Model(selected_date: JSDate, today: JSDate)`.
+
 ## Итоги
 
 Lustre предлагает строго типизированный UI с:
@@ -735,9 +1428,53 @@ Lustre предлагает строго типизированный UI с:
 
 Gleam позволяет использовать один язык и для бэкенда (Wisp, OTP), и для фронтенда (Lustre) — уникальная возможность в мире типизированных языков.
 
+## TEA в других языках и фреймворках
+
+Если вам понравилась The Elm Architecture, вот другие реализации и вдохновлённые ей фреймворки:
+
+### Elm (оригинал)
+- **Язык:** Elm (чисто функциональный, компилируется в JavaScript)
+- **Сайт:** https://elm-lang.org/
+- Оригинальная реализация TEA от Evan Czaplicki
+- Самая строгая типизация, нет runtime exceptions
+- Идеален для изучения TEA в чистом виде
+
+### Redux (JavaScript/TypeScript)
+- **Экосистема:** React
+- **Сайт:** https://redux.js.org/
+- TEA для JavaScript: actions = Msg, reducers = update
+- Redux Toolkit упрощает шаблонный код
+- Самая популярная адаптация TEA (миллионы приложений)
+
+### Elmish (F#)
+- **Платформа:** .NET
+- **Сайт:** https://elmish.github.io/elmish/
+- TEA для F# с поддержкой .NET экосистемы
+- Интеграция с Xamarin, WPF, Avalonia
+- Использует F# discriminated unions для Msg
+
+### Iced (Rust)
+- **Применение:** Desktop GUI
+- **Сайт:** https://iced.rs/
+- Кроссплатформенный GUI-фреймворк на основе TEA
+- Использует Rust enums для сообщений
+- Поддержка WebAssembly для веб-приложений
+
+### SwiftUI (Swift)
+- **Платформа:** Apple (iOS, macOS, watchOS)
+- Декларативный UI с однонаправленным потоком данных
+- `@State` и `@Binding` вдохновлены TEA
+- Интегрирован в официальный SDK Apple
+
 ## Ресурсы
 
+**Lustre:**
 - [HexDocs — lustre](https://hexdocs.pm/lustre/)
 - [Lustre Quickstart](https://hexdocs.pm/lustre/guide/01-quickstart.html)
 - [Lustre — GitHub](https://github.com/lustre-labs/lustre)
 - [Building your first Gleam web app with Wisp and Lustre](https://gleaming.dev/articles/building-your-first-gleam-web-app/)
+
+**The Elm Architecture:**
+- [The Elm Architecture (оригинальный гайд)](https://guide.elm-lang.org/architecture/)
+- [Redux — A Predictable State Container for JS Apps](https://redux.js.org/)
+- [Elmish: Elm-like abstractions for F#](https://elmish.github.io/elmish/)
