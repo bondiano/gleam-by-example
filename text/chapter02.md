@@ -53,7 +53,7 @@ $ asdf global erlang latest
 
 ```sh
 $ gleam --version
-gleam 1.6.1
+gleam 1.14.0
 
 $ erl -eval 'erlang:display(erlang:system_info(otp_release)), halt().' -noshell
 "27"

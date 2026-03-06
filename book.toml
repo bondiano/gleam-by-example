@@ -19,4 +19,4 @@ renderer = ["html"]
 additional-js = ["theme/gleam-highlight.js"]
 mathjax-support = true
 sidebar-header-nav = true
-additional-css = ["./mdbook-admonish.css"]
+additional-css = ["./mdbook-admonish.css", "./theme/cover.css"]

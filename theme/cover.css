@@ -1,0 +1,13 @@
+.book-cover {
+  display: flex;
+  justify-content: center;
+  margin: 0 auto 2rem;
+  max-width: 480px;
+}
+
+.book-cover img {
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+}
