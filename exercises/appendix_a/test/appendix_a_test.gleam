@@ -3,11 +3,14 @@
 // - Форматирование ответов
 // - State machine диалога
 // - Dispatch команд
+// - Роутеры с telega/testing
 
 import gleam/list
 import gleeunit
 import gleeunit/should
 import my_solutions
+
+import telega/testing/conversation
 
 pub fn main() -> Nil {
   gleeunit.main()
@@ -156,4 +159,72 @@ pub fn dispatch_done_out_of_bounds_test() {
   let #(tasks, reply) = my_solutions.dispatch(my_solutions.CmdDone(5), initial)
   list.length(tasks) |> should.equal(1)
   reply |> should.equal("Нет задачи с номером 5")
+}
+
+// ── Упражнение 6: build_greeting_router ──────────────────────────────────
+
+pub fn greeting_start_test() {
+  conversation.conversation_test()
+  |> conversation.send("/start")
+  |> conversation.expect_reply_containing("Привет")
+  |> conversation.run(my_solutions.build_greeting_router(), fn() { Nil })
+}
+
+pub fn greeting_help_test() {
+  conversation.conversation_test()
+  |> conversation.send("/help")
+  |> conversation.expect_reply_containing("/start")
+  |> conversation.run(my_solutions.build_greeting_router(), fn() { Nil })
+}
+
+// ── Упражнение 7: build_echo_router ──────────────────────────────────────
+
+pub fn echo_text_test() {
+  conversation.conversation_test()
+  |> conversation.send("hello")
+  |> conversation.expect_reply("Эхо: hello")
+  |> conversation.run(my_solutions.build_echo_router(), fn() { Nil })
+}
+
+pub fn echo_another_text_test() {
+  conversation.conversation_test()
+  |> conversation.send("мир")
+  |> conversation.expect_reply("Эхо: мир")
+  |> conversation.run(my_solutions.build_echo_router(), fn() { Nil })
+}
+
+// ── Упражнение 8: build_register_router ──────────────────────────────────
+
+pub fn register_flow_test() {
+  conversation.conversation_test()
+  |> conversation.send("/register")
+  |> conversation.expect_reply_containing("зовут")
+  |> conversation.send("Alice")
+  |> conversation.expect_reply_containing("Alice")
+  |> conversation.run(my_solutions.build_register_router(), fn() { Nil })
+}
+
+// ── Упражнение 9: build_menu_router ──────────────────────────────────────
+
+pub fn menu_keyboard_test() {
+  conversation.conversation_test()
+  |> conversation.send("/menu")
+  |> conversation.expect_keyboard(buttons: ["Список", "Добавить"])
+  |> conversation.run(my_solutions.build_menu_router(), fn() { Nil })
+}
+
+// ── Упражнение 10: build_merged_router ───────────────────────────────────
+
+pub fn merged_start_test() {
+  conversation.conversation_test()
+  |> conversation.send("/start")
+  |> conversation.expect_reply_containing("Привет")
+  |> conversation.run(my_solutions.build_merged_router(), fn() { Nil })
+}
+
+pub fn merged_ban_test() {
+  conversation.conversation_test()
+  |> conversation.send("/ban")
+  |> conversation.expect_reply_containing("заблокирован")
+  |> conversation.run(my_solutions.build_merged_router(), fn() { Nil })
 }

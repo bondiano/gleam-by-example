@@ -1,6 +1,8 @@
 import gleam/int
 import gleam/option.{None, Some}
-import telega/bot.{type Context, wait_choice, wait_email, wait_number, wait_text}
+
+import telega
+import telega/bot.{type Context}
 import telega/reply
 
 pub type Plan {
@@ -10,48 +12,58 @@ pub type Plan {
 
 // Простой диалог
 pub fn handle_name_conversation(ctx: Context(Nil, Nil), _command) {
-  use ctx <- reply.with_text(ctx, "Как вас зовут?")
-  use ctx, name <- wait_text(ctx, or: None, timeout: None)
+  let assert Ok(_) = reply.with_text(ctx:, text: "Как вас зовут?")
+  use ctx, name <- telega.wait_text(ctx:, or: None, timeout: None)
 
-  use ctx <- reply.with_text(ctx, "Сколько вам лет?")
-  use ctx, age_str <- wait_text(ctx, or: None, timeout: None)
+  let assert Ok(_) = reply.with_text(ctx:, text: "Сколько вам лет?")
+  use ctx, age_str <- telega.wait_text(ctx:, or: None, timeout: None)
 
-  reply.with_text(ctx, "Привет, " <> name <> "! Вам " <> age_str <> " лет.")
+  let assert Ok(_) =
+    reply.with_text(
+      ctx:,
+      text: "Привет, " <> name <> "! Вам " <> age_str <> " лет.",
+    )
+  Ok(ctx)
 }
 
 // Форма регистрации с валидацией
 pub fn handle_register(ctx: Context(Nil, Nil), _command) {
-  use ctx <- reply.with_text(ctx, "Давайте зарегистрируемся! Как вас зовут?")
-  use ctx, name <- wait_text(ctx, or: None, timeout: Some(120_000))
+  let assert Ok(_) =
+    reply.with_text(ctx:, text: "Давайте зарегистрируемся! Как вас зовут?")
+  use ctx, name <- telega.wait_text(ctx:, or: None, timeout: Some(120_000))
 
-  use ctx <- reply.with_text(ctx, "Сколько вам лет?")
-  use ctx, age <- wait_number(
-    ctx,
+  let assert Ok(_) = reply.with_text(ctx:, text: "Сколько вам лет?")
+  use ctx, age <- telega.wait_number(
+    ctx:,
     min: Some(13),
     max: Some(120),
     or: Some(
       bot.HandleText(fn(ctx, _) {
-        reply.with_text(ctx, "Введите возраст (число от 13 до 120)")
+        let assert Ok(_) =
+          reply.with_text(ctx:, text: "Введите возраст (число от 13 до 120)")
+        Ok(ctx)
       }),
     ),
     timeout: Some(60_000),
   )
 
-  use ctx <- reply.with_text(ctx, "Ваш email?")
-  use ctx, email <- wait_email(
-    ctx,
+  let assert Ok(_) = reply.with_text(ctx:, text: "Ваш email?")
+  use ctx, email <- telega.wait_email(
+    ctx:,
     or: Some(
       bot.HandleText(fn(ctx, _) {
-        reply.with_text(ctx, "Некорректный email. Попробуйте ещё раз.")
+        let assert Ok(_) =
+          reply.with_text(ctx:, text: "Некорректный email. Попробуйте ещё раз.")
+        Ok(ctx)
       }),
     ),
     timeout: Some(60_000),
   )
 
-  use ctx <- reply.with_text(ctx, "Выберите тарифный план:")
-  use ctx, plan <- wait_choice(
-    ctx,
-    [#("🆓 Бесплатный", Free), #("💎 Премиум", Premium)],
+  let assert Ok(_) = reply.with_text(ctx:, text: "Выберите тарифный план:")
+  use ctx, plan <- telega.wait_choice(
+    ctx:,
+    options: [#("🆓 Бесплатный", Free), #("💎 Премиум", Premium)],
     or: None,
     timeout: Some(60_000),
   )
@@ -62,13 +74,16 @@ pub fn handle_register(ctx: Context(Nil, Nil), _command) {
     Premium -> "Премиум"
   }
 
-  reply.with_text(
-    ctx,
-    "✅ Регистрация завершена!\n\nИмя: "
-      <> name
-      <> "\nВозраст: "
-      <> int.to_string(age)
-      <> "\nПлан: "
-      <> plan_name,
-  )
+  let _ = email
+  let assert Ok(_) =
+    reply.with_text(
+      ctx:,
+      text: "✅ Регистрация завершена!\n\nИмя: "
+        <> name
+        <> "\nВозраст: "
+        <> int.to_string(age)
+        <> "\nПлан: "
+        <> plan_name,
+    )
+  Ok(ctx)
 }

@@ -2,6 +2,14 @@
 ////
 //// Запуск тестов: gleam test
 
+import gleam/option.{type Option, None}
+
+import telega/bot.{type Context}
+import telega/keyboard
+import telega/reply
+import telega/router.{type Router}
+import telega/update.{type Command}
+
 // ── Типы (не менять) ─────────────────────────────────────────────────────
 
 /// Команды бота.
@@ -96,5 +104,65 @@ pub fn dispatch(
   cmd: BotCommand,
   tasks: List(Task),
 ) -> #(List(Task), String) {
+  todo
+}
+
+// ── Упражнение 6 ─────────────────────────────────────────────────────────
+// Создайте роутер с двумя командами:
+//   /start → ответ содержит "Привет"
+//   /help  → ответ содержит "/start"
+//
+// Тест проверяет через telega/testing/conversation DSL.
+//
+// Подсказка: router.new("greeting") |> router.on_command("start", ...)
+//            reply.with_text(ctx:, text: "...")
+
+pub fn build_greeting_router() -> Router(Nil, Nil) {
+  todo
+}
+
+// ── Упражнение 7 ─────────────────────────────────────────────────────────
+// Создайте роутер-эхо: повторяет любой текст обратно.
+// Ответ должен начинаться с "Эхо: " + исходный текст.
+//
+// Пример: "hello" → "Эхо: hello"
+//
+// Подсказка: router.on_any_text(fn(ctx, text) { ... })
+
+pub fn build_echo_router() -> Router(Nil, Nil) {
+  todo
+}
+
+// ── Упражнение 8 ─────────────────────────────────────────────────────────
+// Создайте роутер с многошаговым диалогом:
+//   /register → бот спрашивает "Как вас зовут?"
+//   пользователь отвечает → бот отвечает "Добро пожаловать, <имя>!"
+//
+// Подсказка: telega.wait_text(ctx:, or: None, timeout: None)
+
+pub fn build_register_router() -> Router(Nil, Nil) {
+  todo
+}
+
+// ── Упражнение 9 ─────────────────────────────────────────────────────────
+// Создайте роутер с inline-клавиатурой:
+//   /menu → отправляет сообщение с inline-кнопками "Список" и "Добавить"
+//
+// Подсказка: keyboard.inline_builder() |> keyboard.inline_text(...)
+//            keyboard.string_callback_data("id")
+//            keyboard.pack_callback(callback_data:, data:)
+
+pub fn build_menu_router() -> Router(Nil, Nil) {
+  todo
+}
+
+// ── Упражнение 10 ────────────────────────────────────────────────────────
+// Создайте два роутера и объедините их через router.merge:
+//   admin_router: /ban → ответ содержит "заблокирован"
+//   user_router:  /start → ответ содержит "Привет"
+//
+// Подсказка: router.merge(first, second)
+
+pub fn build_merged_router() -> Router(Nil, Nil) {
   todo
 }
